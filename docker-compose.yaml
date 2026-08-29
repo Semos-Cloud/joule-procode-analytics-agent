@@ -1,0 +1,58 @@
+# The deployed shape: LangGraph server, its Postgres/Redis backing services, and
+# the A2A gateway.
+#
+# For the workshop itself the simpler two-process path is easier to demo and has
+# fewer moving parts:
+#     langgraph dev                                    # agent on :2024
+#     uvicorn src.gateway.server:app --port 9000       # gateway on :9000
+# Use this file when you want the containerised setup instead.
+
+services:
+  langgraph-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  langgraph-redis:
+    image: redis:7
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  langgraph-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.langgraph
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URI: postgres://postgres:postgres@langgraph-postgres:5432/postgres?sslmode=disable
+      REDIS_URI: redis://langgraph-redis:6379
+    depends_on:
+      langgraph-postgres:
+        condition: service_healthy
+      langgraph-redis:
+        condition: service_healthy
+
+  a2a-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    ports:
+      - "9000:9000"
+    env_file: .env
+    environment:
+      # Inside the compose network the gateway reaches LangGraph by service name.
+      LANGGRAPH_API_URL: http://langgraph-api:8000
+    depends_on:
+      - langgraph-api

@@ -1,0 +1,69 @@
+[project]
+name = "joule-procode-agent-workshop"
+version = "1.0.0"
+description = "A pro-code LangGraph agent on SAP Business AI Platform, published to Joule as a Skill with a generative UI response."
+requires-python = ">=3.11,<3.14"
+
+# Deliberately short. There is no database driver anywhere in this list — the
+# agent reaches business data only through the MCP server, and that constraint
+# is meant to be verifiable by reading this file (Stage 2 of the workshop).
+dependencies = [
+    # langgraph pulls a matching langgraph-prebuilt itself. Pinning the two
+    # independently is how you end up with a prebuilt that imports a symbol the
+    # installed langgraph does not have, so only langgraph is pinned here.
+    "langgraph>=1.2.11,<2.0",
+    "langchain-core>=1.6,<2.0",
+    "langchain-openai>=1.1,<2.0",
+    # Stage 2: turns MCP server tools into LangChain tools.
+    "langchain-mcp-adapters>=0.1,<0.2",
+    # mcp 2.x moved mcp.shared.session, which langchain-mcp-adapters 0.1.x
+    # imports. Until the adapters catch up, the SDK has to stay on 1.x.
+    "mcp>=1.9,<2.0",
+    # Stage 3: SAP Gen AI Hub (AI Core) LLM proxy — provides gen_ai_hub.*
+    "sap-ai-sdk-gen>=6.7.0,<7.0.0",
+    "pydantic>=2.12,<3.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Stage 4b. The A2A gateway runs as its own small container (Dockerfile.gateway)
+# and deliberately does NOT import langchain, so it stays a thin, fast proxy.
+# `new_data_artifact` (used to emit the UI DataPart) requires a2a-sdk >= 0.3.25.
+gateway = [
+    "a2a-sdk[http-server]>=0.3.25,<1.0",
+    "starlette>=0.40.0",
+    "uvicorn[standard]>=0.30.0",
+    "aiohttp>=3.9.0",
+]
+# Only needed to run the agent inside the LangGraph API container, which
+# checkpoints conversation state to Postgres.
+postgres = [
+    "langgraph-checkpoint-postgres>=3.0.3,<4.0",
+    "psycopg[binary,pool]>=3.2.3",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=73.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+markers = [
+    "live: hits the real MCP server or a real LLM; needs credentials",
+]
+
+[tool.ruff]
+line-length = 100
+lint.select = ["E", "F", "I", "UP"]
+lint.ignore = ["E501", "UP006", "UP007", "UP035"]

@@ -1,0 +1,19 @@
+schema_version: 3.27.0
+
+metadata:
+  namespace: joule.ext
+  name: team_analytics_capability
+  version: 1.0.0
+  display_name: Team Analytics Capability
+  description: >-
+    Answers a manager's questions about how their own team is participating in
+    recognition - engagement index per person, who is giving and receiving, and
+    which award reasons the team uses. Read-only.
+
+# Binds the logical name used in the function to a BTP destination. The
+# destination is configured in the BTP cockpit and points at this gateway's
+# /team-analytics-agent path. Keeping it indirect means moving the gateway to a
+# new host is a destination change, not a redeploy of the capability.
+system_aliases:
+  TEAM_ANALYTICS_AGENT:
+    destination: TEAM_ANALYTICS_AGENT

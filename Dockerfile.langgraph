@@ -1,0 +1,11 @@
+# The agent, served by the LangGraph API image. Only needed for the
+# containerised path in docker-compose.yaml; `langgraph dev` is enough locally.
+FROM langchain/langgraph-api:0.8.3-py3.12
+
+ADD . /deps/joule-procode-agent-workshop
+
+RUN PYTHONDONTWRITEBYTECODE=1 pip install --no-cache-dir -c /api/constraints.txt -e /deps/joule-procode-agent-workshop
+
+ENV LANGSERVE_GRAPHS='{"team_analytics": "/deps/joule-procode-agent-workshop/src/agent/graph.py:graph"}'
+
+WORKDIR /deps/joule-procode-agent-workshop

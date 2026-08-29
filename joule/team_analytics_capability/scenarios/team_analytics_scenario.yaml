@@ -1,0 +1,19 @@
+# Joule's scenario matcher is the routing layer. It compares the user's
+# utterance against this description to decide whether to trigger the function
+# below, so the description is written for a matcher, not for a person: it
+# states plainly what is in scope and what is not.
+description: >-
+  The Team Analytics Agent answers a people manager's READ-ONLY questions about
+  how their own team is participating in employee recognition. Use it for
+  questions about each team member's engagement index, who has given or received
+  the most recognitions, who is not participating, how engagement changed over a
+  period such as last quarter, rankings of team members, and breakdowns of the
+  team's recognitions by award reason or by monetary versus non-monetary
+  program type. Use it only for analysing, comparing, ranking or reporting on
+  data that already exists. DO NOT use this scenario when the user wants to
+  send, draft, schedule or nominate a recognition, or to change any data -
+  those are write actions and belong to a different agent.
+
+target:
+  name: team_analytics_function
+  type: function
