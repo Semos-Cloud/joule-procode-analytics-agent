@@ -50,20 +50,48 @@ _RENDER_OFFER_RE = {
 
 _URL_RE = re.compile(r"https?://", re.I)
 
-# Two-tier match, so an incidental "in a column format" (describing a table)
-# never beats an explicit "...as a donut chart". The LAST match wins, since the
-# concluding sentence is the one declaring what is actually being rendered.
+_DIGIT_RE = re.compile(r"\d")
+
+# Two-tier match. The strict tier wants the noun ("...as a donut chart"); the
+# loose tier catches the noun being dropped ("...show it as a donut"). Neither
+# tier matches a bare occurrence of the word, because "column" and "line" are
+# ordinary words in prose about tables — "in a column format" must not override
+# the synth, which had the actual data to infer from. The LAST match wins, since
+# the concluding sentence declares what is being rendered.
 _CHART_TYPE_WORD = r"(donut|doughnut|pie|bar|line|column)"
-_CHART_TYPE_NAMED_RE = re.compile(rf"\b{_CHART_TYPE_WORD}\s+(?:chart|graph)\b", re.I)
-_CHART_TYPE_ANY_RE = re.compile(rf"\b{_CHART_TYPE_WORD}\b", re.I)
+_CHART_TYPE_NAMED_RE = re.compile(rf"\b{_CHART_TYPE_WORD}\s+(?:chart|graph|plot)\b", re.I)
+_CHART_TYPE_LOOSE_RE = re.compile(
+    rf"\b(?:as|in|into|using)\s+(?:a|an)\s+{_CHART_TYPE_WORD}"
+    r"\b(?!\s+(?:format|layout|table|form|heading|header|column|order|fashion))",
+    re.I,
+)
 
 
 def _named_chart_type(text: str) -> str | None:
     """The chart type the assistant named in prose, normalised, or None."""
-    matches = _CHART_TYPE_NAMED_RE.findall(text) or _CHART_TYPE_ANY_RE.findall(text)
+    matches = _CHART_TYPE_NAMED_RE.findall(text) or _CHART_TYPE_LOOSE_RE.findall(text)
     if not matches:
         return None
     return matches[-1].lower().replace("doughnut", "donut")
+
+
+def _only_offers(reply: str, render: str, offer_re: re.Pattern) -> bool:
+    """True when the reply merely *offers* the artifact instead of presenting it.
+
+    The offer pattern alone is not enough to decide. The system prompt asks the
+    agent to end with a useful follow-up, so a perfectly good chart reply often
+    closes with "would you like me to chart the reasons as well?" — and keying
+    only on that sentence deletes the chart the agent just presented.
+
+    So the offer sentences are removed first, and what remains is judged. A
+    chart needs numbers: if every digit in the reply lived inside the offer,
+    there was nothing to plot and the veto is right. Otherwise the agent
+    presented something and the widget stands.
+    """
+    remainder = offer_re.sub(" ", reply)
+    if render == "chart":
+        return not _DIGIT_RE.search(remainder)
+    return len(remainder.strip()) < 40
 
 
 def _current_turn(messages: List[Any]) -> List[Any]:
@@ -187,11 +215,14 @@ def make_ui_synth_node(llm=None):
 
         reply_text = _last_assistant_text(turn)
 
-        offer_re = _RENDER_OFFER_RE.get(args.get("render"))
-        if offer_re and offer_re.search(reply_text):
-            logger.info(
-                "ui_synth: assistant only offers to produce %r -> text", args.get("render")
-            )
+        render = args.get("render")
+        offer_re = _RENDER_OFFER_RE.get(render)
+        if (
+            offer_re
+            and offer_re.search(reply_text)
+            and _only_offers(reply_text, render, offer_re)
+        ):
+            logger.info("ui_synth: assistant only offers to produce %r -> text", render)
             args = {"render": "text"}
 
         actions = args.get("actions")
