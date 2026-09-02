@@ -51,6 +51,7 @@ _RENDER_OFFER_RE = {
 _URL_RE = re.compile(r"https?://", re.I)
 
 _DIGIT_RE = re.compile(r"\d")
+_RANK_RE = re.compile(r"\b(best|most|top|rank(?:ed|ing)?|highest|lowest|fewest)\b", re.I)
 
 # Two-tier match. The strict tier wants the noun ("...as a donut chart"); the
 # loose tier catches the noun being dropped ("...show it as a donut"). Neither
@@ -178,18 +179,27 @@ def make_ui_synth_node(llm=None):
     be imported — and ``langgraph dev`` can start — before credentials are
     present. Pass a model explicitly to pin one, mainly for tests.
     """
-    synth = llm.with_structured_output(FinalResponse) if llm is not None else None
+    # bind_tools + ainvoke, not with_structured_output. The latter streams, and
+    # Gen AI Hub's wrapper passes deployment_id into OpenAI's stream() which
+    # rejects it (the agent node already uses this path and works).
+    synth = (
+        llm.bind_tools([FinalResponse], tool_choice="FinalResponse") if llm is not None else None
+    )
 
     def _runnable():
         nonlocal synth
         if synth is None:
-            synth = load_chat_model(UI_SYNTH_MODEL).with_structured_output(FinalResponse)
+            synth = load_chat_model(UI_SYNTH_MODEL, stream_usage=False).bind_tools(
+                [FinalResponse], tool_choice="FinalResponse"
+            )
         return synth
 
     async def _synth(payload: List[Any], config: RunnableConfig) -> Dict[str, Any]:
         result = await _runnable().ainvoke(payload, config)
         if isinstance(result, FinalResponse):
             return result.model_dump(exclude_none=True)
+        if isinstance(result, AIMessage) and result.tool_calls:
+            return dict(result.tool_calls[0].get("args") or {})
         return dict(result or {})
 
     async def ui_synth_node(state: Dict[str, Any], config: RunnableConfig) -> Dict[str, Any]:
@@ -208,6 +218,25 @@ def make_ui_synth_node(llm=None):
             if args.get("render") == "choice" and len(args.get("actions") or []) < 2:
                 logger.info("ui_synth: degenerate choice -> retrying once")
                 args = await _synth(payload, config)
+            # Rankings with numbers must be charts. The model often emits a
+            # name/title list instead (Joule then shows a people card).
+            elif args.get("render") in {"list", "card"} and _RANK_RE.search(
+                reply_for_retry := _last_assistant_text(turn)
+            ) and _DIGIT_RE.search(reply_for_retry):
+                logger.info("ui_synth: ranking with numbers as %s -> retry chart", args.get("render"))
+                args = await _synth(
+                    [
+                        *payload,
+                        HumanMessage(
+                            content=(
+                                "This answer ranks people or categories by a number. "
+                                "You MUST use render=chart and fill chart.data from the "
+                                "names and numbers already in the message or tool data."
+                            )
+                        ),
+                    ],
+                    config,
+                )
         except Exception as e:
             # UI synthesis must never break a reply the user already received.
             logger.warning("ui_synth failed (%s) -> render=text", e)

@@ -134,14 +134,20 @@ render options:
              answers, explanations, follow-up questions the user answers by
              typing, and short summaries are all "text".
   "chart"  - the message presents numeric results worth plotting (a ranking, a
-             breakdown, a comparison across people or categories). Put the
-             numbers in `chart`:
+             breakdown, a comparison across people or categories). This is
+             REQUIRED for "best / most / top / ranked" answers that have
+             numbers — never use "list" for those. Put the numbers in `chart`:
                chart: {chart_type: "bar"|"column"|"line"|"pie"|"donut",
                        title, dimensions: [key], measures: [key],
                        data: [{<dimension>: str, <measure>: number}, ...]}
              If the assistant named a chart type (donut/pie/bar/line/column),
              use EXACTLY that; otherwise infer it from the data shape.
-  "list"   - the message presents rows/records worth browsing individually.
+             For "best senders" / who gave the most, the measure is sent
+             recognitions (or the count the assistant used), the dimension
+             is the person's name.
+  "list"   - non-numeric rows worth browsing (a catalogue of names or reasons
+             with no ranking metric). Never use this when the answer ranks
+             people or categories by a number.
              items: [{title, subtitle?, value?, image_url?}, ...]
   "card"   - a single entity summary.
              fields: {title, subtitle?, image_url?}

@@ -15,5 +15,5 @@ metadata:
 # /team-analytics-agent path. Keeping it indirect means moving the gateway to a
 # new host is a destination change, not a redeploy of the capability.
 system_aliases:
-  TEAM_ANALYTICS_AGENT:
-    destination: TEAM_ANALYTICS_AGENT
+  ANALYTICS_AGENT:
+    destination: ANALYTICS_AGENT

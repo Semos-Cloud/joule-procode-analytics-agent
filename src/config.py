@@ -12,15 +12,48 @@ the tools, or the UI contract knows which model is behind ``load_chat_model``.
 import logging
 import os
 from functools import lru_cache
+from pathlib import Path
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 from gen_ai_hub.proxy.core import get_proxy_client
 from gen_ai_hub.proxy.langchain.init_models import init_llm
 from langchain_core.language_models import BaseChatModel
 
-load_dotenv()
+# LangGraph loads ``langgraph.json`` ``env`` first, and that pass interpolates
+# ``$`` in values. The AI Core client secret contains ``$``, so a truncated
+# secret is already in ``os.environ`` by the time this module imports. Reload
+# AICORE_* from the file without interpolation and overwrite.
+load_dotenv(interpolate=False)
+_ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
+if _ENV_FILE.is_file():
+    for _key, _val in dotenv_values(_ENV_FILE, interpolate=False).items():
+        if _key and _key.startswith("AICORE_") and _val is not None:
+            os.environ[_key] = _val
+
+# The AI Core SDK uses ``requests.post`` for the OAuth token. ``requests``
+# honours HTTP(S)_PROXY. A Cursor/sandbox proxy that MCP/httpx can get through
+# still 403s that call, and the SDK wraps it as "Could not retrieve
+# Authorization token" with no status. Direct to IAS/AI Core; do not proxy.
+for _proxy_key in (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+):
+    os.environ.pop(_proxy_key, None)
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
 
 logger = logging.getLogger(__name__)
+_secret = os.environ.get("AICORE_CLIENT_SECRET", "")
+logger.info(
+    "AI Core env: secret_len=%s has_dollar=%s auth_url_set=%s",
+    len(_secret),
+    "$" in _secret,
+    bool(os.environ.get("AICORE_AUTH_URL")),
+)
 
 # The model that does the reasoning and calls the MCP tools.
 AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gpt-4.1-mini")
@@ -48,22 +81,29 @@ def load_chat_model(
     model: str | None = None,
     temperature: float = 0.0,
     max_tokens: int | None = None,
+    stream_usage: bool = True,
 ) -> BaseChatModel:
     """Return a chat model served by Gen AI Hub.
 
     ``model`` must name a deployment that exists in ``AICORE_RESOURCE_GROUP``;
     an undeployed name fails here rather than at the first token.
+
+    ``stream_usage`` must stay off for structured-output / tool-choice calls.
+    Gen AI Hub's ChatOpenAI wrapper forwards ``deployment_id`` into
+    ``AsyncCompletions.stream()``, which the current OpenAI client rejects.
+    The agent node uses ``ainvoke`` and is fine with streaming usage on.
     """
     name = model or AGENT_MODEL
-    llm = init_llm(
-        name,
-        proxy_client=_proxy_client(),
-        temperature=temperature,
-        max_tokens=max_tokens or MAX_TOKENS,
-    )
-    # init_llm filters this constructor kwarg out, so it has to be set after the
-    # fact. Without it, streamed responses carry no usage_metadata and token
-    # counts are silently lost.
-    llm.stream_usage = True
-    logger.info("Gen AI Hub model ready: %s", name)
+    try:
+        llm = init_llm(
+            name,
+            proxy_client=_proxy_client(),
+            temperature=temperature,
+            max_tokens=max_tokens or MAX_TOKENS,
+        )
+    except Exception:
+        logger.exception("Gen AI Hub init_llm failed for %s", name)
+        raise
+    llm.stream_usage = stream_usage
+    logger.info("Gen AI Hub model ready: %s stream_usage=%s", name, stream_usage)
     return llm

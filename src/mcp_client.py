@@ -1,9 +1,10 @@
 """STAGE 2 — data access.
 
-The agent has no database driver, no SQL and no HTTP client for the business
-system. Everything it can reach comes through an MCP server, which owns the
-connection to the underlying store and enforces that a manager only ever sees
-their own team.
+The agent has no driver and no SQL against the live business system. Everything
+it can reach *there* comes through an MCP server, which owns the connection and
+enforces that a manager only ever sees their own team. (The DuckDB mart in ``src/warehouse`` is a per-session snapshot of these
+same reports, loaded when the conversation starts; it is not a second
+path into the system of record.)
 
 Two things make that boundary real rather than decorative:
 
@@ -26,7 +27,7 @@ from dotenv import load_dotenv
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-load_dotenv()
+load_dotenv(interpolate=False)
 
 logger = logging.getLogger(__name__)
 

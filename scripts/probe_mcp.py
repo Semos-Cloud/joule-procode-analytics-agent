@@ -21,7 +21,7 @@ import sys
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-load_dotenv()
+load_dotenv(interpolate=False)
 
 DEFAULT_BASE_URL = os.getenv("MCP_BASE_URL", "https://jobptsapi.semoscloud.com")
 DEFAULT_EMAIL = os.getenv("MCP_USER_EMAIL", "")

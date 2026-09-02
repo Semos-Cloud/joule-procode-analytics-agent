@@ -4,9 +4,9 @@ version = "1.0.0"
 description = "A pro-code LangGraph agent on SAP Business AI Platform, published to Joule as a Skill with a generative UI response."
 requires-python = ">=3.11,<3.14"
 
-# Deliberately short. There is no database driver anywhere in this list — the
-# agent reaches business data only through the MCP server, and that constraint
-# is meant to be verifiable by reading this file (Stage 2 of the workshop).
+# Deliberately short. Live business data still arrives only through MCP
+# (Stage 2). duckdb is the local mart used by the text-to-SQL tool, not a
+# driver to the system of record.
 dependencies = [
     # langgraph pulls a matching langgraph-prebuilt itself. Pinning the two
     # independently is how you end up with a prebuilt that imports a symbol the
@@ -23,6 +23,8 @@ dependencies = [
     "sap-ai-sdk-gen>=6.7.0,<7.0.0",
     "pydantic>=2.12,<3.0",
     "python-dotenv>=1.0",
+    # Local recognition mart for ad-hoc SQL (text-to-SQL tool).
+    "duckdb>=1.1,<2.0",
 ]
 
 [project.optional-dependencies]

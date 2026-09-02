@@ -11,9 +11,10 @@
 #
 # Why the two paths below look different:
 #
-#   card / list / choice / form -> `data.manifest` passthrough. The gateway
+#   card / list / choice / form -> `data['manifest']` passthrough. The gateway
 #       already baked a ui5integrationCard in Python (build_joule_manifest), so
-#       there is nothing to template here. This is the preferred route.
+#       there is nothing to template here. This is the preferred route. Use
+#       bracket notation: a missing `.manifest` on a Java Map throws EL1008E.
 #
 #   chart -> built inline, because a chart needs its rows reshaped and that
 #       reshaping is the one thing the manifest builder cannot pre-bake for
@@ -28,10 +29,10 @@
 
 action_groups:
   # 1 - Invoke the agent over A2A. The alias resolves to the BTP destination
-  #     pointing at the gateway's /team-analytics-agent endpoint.
+  #     pointing at the gateway's /analytics-agent endpoint.
   - actions:
       - type: agent-request
-        system_alias: TEAM_ANALYTICS_AGENT
+        system_alias: ANALYTICS_AGENT
         agent_type: remote
         result_variable: "apiResponse"
 
@@ -39,16 +40,22 @@ action_groups:
   - actions:
       - type: message
         message:
-          type: markdown
+          type: text
           markdown: true
           content: "<? apiResponse.body.artifacts[0].parts[0].text ?>"
 
   # 3 - Pre-baked card types: one passthrough covers card, list, choice, form.
-  - condition: apiResponse.body.artifacts.size() > 1 && apiResponse.body.artifacts[1].parts[0].data.manifest != null
+  #
+  # Bracket notation is required: chart payloads have no `manifest` key, and
+  # SpEL on a Java Map throws EL1008E for `.manifest` (missing property) instead
+  # of returning null. That skip is logged as ACTION_GROUP_FAILED and Joule
+  # still emits a "(no response from agent)" bubble. `['manifest']` is Map.get
+  # and evaluates to false, so this group is skipped cleanly.
+  - condition: apiResponse.body.artifacts.size() > 1 && apiResponse.body.artifacts[1].parts[0].data['manifest'] != null
     actions:
       - type: message
         scripting_type: spel
-        message: <? apiResponse.body.artifacts[1].parts[0].data.manifest ?>
+        message: <? apiResponse.body.artifacts[1].parts[0].data['manifest'] ?>
 
   # 4 - Outcome line.
   - condition: apiResponse.body.artifacts.size() > 1 && apiResponse.body.artifacts[1].parts[0].data.render == 'status'
@@ -98,13 +105,21 @@ action_groups:
           {
             "type": "ui5integrationCard",
             "content": {
-              "_version": "1.17.0",
+              "_version": "1.36.0",
               "sap.app": { "type": "card", "id": "workshop.team_analytics.chart" },
               "sap.card": {
                 "type": "Analytical",
                 "header": { "title": "<? chart.title ?>" },
                 "content": {
                   "chartType": "<? chart.chart_type ?>",
+                  "minHeight": "24rem",
+                  "chartProperties": {
+                    "title": { "visible": false },
+                    "legend": { "visible": false },
+                    "categoryAxis": {
+                      "label": { "linesOfWrap": 2 }
+                    }
+                  },
                   "data": { "json": <? chartRows ?> },
                   "dimensions": [
                     { "label": "<? dimKey ?>", "value": "{label}" },

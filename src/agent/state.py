@@ -7,9 +7,12 @@ Two channels, deliberately separate:
 ``ui``
     The structured widget for the current turn, written once by the synth node
     at the end. Clients read it off the ``updates`` stream.
+``warehouse``
+    Whether this thread's DuckDB catalog is loaded, plus row counts. The rows
+    themselves stay in process memory, keyed by thread id — not in the checkpoint.
 
-Keeping them apart is what lets the answer stream immediately while the chart is
-decided afterwards, from the finished turn.
+Keeping narration and UI apart is what lets the answer stream immediately while
+the chart is decided afterwards, from the finished turn.
 """
 
 from typing import Annotated, Any, Dict, List
@@ -24,3 +27,4 @@ class AgentState(TypedDict):
 
     messages: Annotated[List[AnyMessage], add_messages]
     ui: NotRequired[Dict[str, Any]]
+    warehouse: NotRequired[Dict[str, Any]]

@@ -220,12 +220,41 @@ class TeamAnalyticsExecutor(AgentExecutor):
         carry a few hundred rows of tool output and would overflow a line buffer.
         """
         narration = ""
-        current_message_id = None
         ui = None
 
         event_type = ""
         data_buffer = ""
         raw = b""
+
+        def _flush_event() -> None:
+            nonlocal event_type, data_buffer, narration, ui
+            if not data_buffer:
+                event_type, data_buffer = "", ""
+                return
+            try:
+                data = json.loads(data_buffer)
+            except json.JSONDecodeError:
+                data = None
+            if data is not None and event_type.startswith("messages"):
+                # LangGraph 0.13 emits messages / messages/partial /
+                # messages/complete. Gen AI Hub often sends content as a list
+                # of blocks, not a string — treating only strings left
+                # narration empty and Joule showed "(no response from agent)".
+                #
+                # ui_synth then emits a second AIMessage that is only a
+                # tool call (no text). Ignore those: overwriting narration with
+                # an empty string shipped Joule's placeholder as the text
+                # artifact even when the agent had already answered.
+                msg = data[0] if isinstance(data, list) and data else data
+                if isinstance(msg, dict) and msg.get("type") == "ai":
+                    text = TeamAnalyticsExecutor._message_text(msg.get("content"))
+                    if text:
+                        narration = text
+            elif data is not None and event_type == "updates":
+                found = TeamAnalyticsExecutor._find_ui(data)
+                if found is not None:
+                    ui = found
+            event_type, data_buffer = "", ""
 
         async for chunk in resp.content.iter_chunked(65536):
             raw += chunk
@@ -238,30 +267,9 @@ class TeamAnalyticsExecutor(AgentExecutor):
                 elif line.startswith("data:"):
                     data_buffer += line[5:]
                 elif not line:
-                    if data_buffer:
-                        try:
-                            data = json.loads(data_buffer)
-                        except json.JSONDecodeError:
-                            data = None
-
-                        if data is not None and event_type == "messages/partial":
-                            if isinstance(data, list) and data:
-                                msg = data[0]
-                                if msg.get("type") == "ai":
-                                    # A new message id means a fresh assistant turn
-                                    # (for example after a tool call), so restart
-                                    # the accumulation rather than concatenating.
-                                    if msg.get("id") != current_message_id:
-                                        current_message_id = msg.get("id")
-                                        narration = ""
-                                    content = msg.get("content")
-                                    if isinstance(content, str) and content:
-                                        narration = content
-                        elif data is not None and event_type == "updates":
-                            found = TeamAnalyticsExecutor._find_ui(data)
-                            if found is not None:
-                                ui = found
-                    event_type, data_buffer = "", ""
+                    _flush_event()
+        if data_buffer:
+            _flush_event()
 
         if ui is not None:
             # Re-validate: the payload was already checked in-graph, but the
@@ -276,6 +284,23 @@ class TeamAnalyticsExecutor(AgentExecutor):
             logger.info("UI DataPart: render=%s manifest=%s", ui["render"], manifest is not None)
 
         return narration or "(no response from agent)", ui
+
+    @staticmethod
+    def _message_text(content) -> str:
+        """Flatten an AI message content field to plain text."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, str) and block:
+                    parts.append(block)
+                elif isinstance(block, dict):
+                    text = block.get("text") or block.get("content")
+                    if isinstance(text, str) and text:
+                        parts.append(text)
+            return "".join(parts)
+        return ""
 
     @staticmethod
     def _find_ui(update: dict) -> dict | None:

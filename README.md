@@ -33,7 +33,7 @@ The way out is to stop treating narration and structure as one channel:
 ```mermaid
 flowchart TD
   User["Manager asks a question in Joule"] --> Agent
-  Agent["agent node<br/>streams markdown prose"] --> Tools["MCP tools<br/>real data, scoped to this manager"]
+  Agent["agent node<br/>streams markdown prose"] --> Tools["MCP tools + per-session DuckDB<br/>live reports, or SQL on the snapshot"]
   Tools --> Agent
   Agent --> Synth["ui_synth node<br/>a second, forced LLM call"]
   Synth --> State["state.ui = validated contract"]
@@ -104,9 +104,9 @@ what reason, and an engagement index per person.
 
 [src/mcp_client.py](src/mcp_client.py)
 
-The agent has no database driver, no SQL and no HTTP client for the business
-system. Check [pyproject.toml](pyproject.toml) — there is no DB driver in the
-dependency list, and that is meant to be verifiable rather than asserted.
+The agent has no driver and no SQL against the live business system. Check
+[pyproject.toml](pyproject.toml) — `duckdb` is listed for the local mart
+below, not as a client of the system of record.
 
 Everything arrives through an MCP server over SSE:
 
@@ -140,21 +140,39 @@ This is a real bug from the production codebase, where an allowlist and a prompt
 disagreed about whether a tool was called `get_award_reasons_data` or
 `get_monetary_and_nonMonetary_award_reasons_data`.
 
+### Local mart (text-to-SQL)
+
+The two MCP tools are fixed reports. For questions that are easier as SQL
+(windows, multi-column filters, ranking several measures at once) the graph
+loads those reports into a **per-session** in-memory DuckDB when the
+conversation starts, then `query_local_warehouse` compiles English to a
+read-only query against that catalog.
+
+Nothing is written to a CSV. Each LangGraph thread gets its own connection,
+scoped to that manager's MCP pull. Later turns reuse it; a new conversation
+loads again.
+
+[src/warehouse/](src/warehouse/) · [tests/test_warehouse.py](tests/test_warehouse.py)
+
 ## Stage 3 — Reasoning
 
 [src/agent/graph.py](src/agent/graph.py) · [src/agent/prompts.py](src/agent/prompts.py) · [src/config.py](src/config.py)
 
 Deliberately no agent framework beyond LangGraph and no factory: the whole agent
-is one readable file.
+is one readable file. Tools are assembled in `_tools_for`: the two MCP reports,
+then `query_local_warehouse`.
 
 ```
-START -> agent <-> tools
-           |
-           +----> ui_synth -> END
+START -> hydrate -> agent <-> tools
+                      |
+                      +----> ui_synth -> END
 ```
 
 The model comes from Gen AI Hub, which resolves a model *name* against the
 deployments in your AI Core resource group. Swapping providers is one file.
+
+The graph binds the two MCP tools and `query_local_warehouse`. The warehouse
+tool compiles the question to SQL — the agent is told not to write it.
 
 **Grounding and guardrails** are the part that separates a demo from something
 you would let a manager use:
@@ -221,20 +239,46 @@ Its `url` must be the address Joule can actually reach, so it comes from
 
 ```
 team_analytics_capability/
-├── capability.sapdas.yaml   # metadata + the TEAM_ANALYTICS_AGENT alias
+├── capability.sapdas.yaml   # metadata + the ANALYTICS_AGENT alias
 ├── da.sapdas.yaml           # the digital assistant
 ├── scenarios/               # when Joule should route here (intent matching)
 └── functions/               # what Joule does with the answer
 ```
 
+The gateway on `:9000` is what Joule calls. Joule cannot reach localhost, so
+expose it with ngrok (reuse the reserved A2A domain):
+
+```bash
+ngrok http 9000 --url=https://yolando-copasetic-lorrine.ngrok-free.dev
+```
+
+Set `A2A_GATEWAY_BASE_URL` to that HTTPS origin and restart the gateway so the
+Agent Card advertises the public URL, not localhost.
+
 Configure one BTP destination:
 
 | Destination | URL |
 |---|---|
-| `TEAM_ANALYTICS_AGENT` | `https://<your-gateway-host>/team-analytics-agent` |
+| `ANALYTICS_AGENT` | `https://yolando-copasetic-lorrine.ngrok-free.dev/team-analytics-agent` |
 
-Use `PrincipalPropagation` so the manager's identity reaches the gateway — that
-is what makes Stage 2's per-user scoping work end to end.
+Add destination header `ngrok-skip-browser-warning` = `true` so Joule is not
+served the ngrok interstitial. Use `PrincipalPropagation` so the manager's
+identity reaches the gateway — that is what makes Stage 2's per-user scoping
+work end to end.
+
+Log in to the Joule tenant first. Use `--no-app-tid`: without it, joule-cli
+2.0.2 currently fails IAS login with `AUTH_FETCH_TOKEN_FAILED` (401 immediately,
+or 400 on the next command). The flag skips the `app_tid` parameter and restores
+the working flow. Keep it on every `joule login` until the CLI default is fixed.
+
+```bash
+joule login --no-app-tid
+# Authentication URL:  https://<tenant-id>.accounts.ondemand.com
+# API URL:             https://<subdomain>.<region>.sapdas.cloud.sap
+# Instance Client ID / Secret: the IAS App2App app with the Cli2Joule dependency
+# Username / Password: a personal IAS user with capability_admin and
+#                      extensibility_developer (not a CF technical user)
+```
 
 Then publish:
 
@@ -269,6 +313,7 @@ Run through this before the session, not during it.
 - [ ] `curl localhost:9000/health` returns ok
 - [ ] The agent card is reachable at the **public** gateway URL, not localhost
 - [ ] The BTP destination points at that public URL and uses principal propagation
+- [ ] `joule login --no-app-tid` succeeds as an IAS user (not a CF technical user)
 - [ ] `joule deploy` succeeds and the scenario matches your opening utterance
 - [ ] The chart renders in Joule (see tenant-verify below)
 - [ ] A fallback recording of the full flow exists
@@ -290,6 +335,7 @@ depend on the tenant and must be confirmed before the session:
 src/
   config.py           Gen AI Hub model configuration
   mcp_client.py       STAGE 2 — MCP over SSE, identity + allowlist
+  warehouse/          per-session DuckDB mart + text-to-SQL tool
   agent/
     graph.py          STAGE 3 — the graph, in ~100 readable lines
     prompts.py        system prompt, grounding and guardrails
@@ -306,6 +352,7 @@ scripts/
   call_agent.sh       A2A smoke test
 tests/
   test_ui_contract.py
+  test_warehouse.py
 ```
 
 ## Credits
