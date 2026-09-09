@@ -8,7 +8,13 @@ question is already a read.
 import pytest
 
 from src.warehouse.hydrate import coerce_rows, hydrate_session
-from src.warehouse.sql_guard import apply_limit, ensure_readonly, extract_sql, looks_like_sql, strip_internal_ids
+from src.warehouse.sql_guard import (
+    apply_limit,
+    ensure_readonly,
+    extract_sql,
+    looks_like_sql,
+    strip_internal_ids,
+)
 from src.warehouse.store import drop_session, fetch_rows, load_session, reset, schema_text
 from src.warehouse.tool import run_warehouse_question
 
@@ -145,10 +151,10 @@ class TestHydrate:
 
         assert first["cached"] is False
         assert second["cached"] is True
-        assert first["tables"]["team_reach"] == 1
+        assert first["tables"]["my_teams_reach"] == 1
         assert first["tables"]["award_reasons"] == 1
         assert calls["n"] == 2
-        assert fetch_rows('SELECT "FullName" FROM team_reach', "thread-1") == [
+        assert fetch_rows('SELECT "FullName" FROM my_teams_reach', "thread-1") == [
             {"FullName": "Ana"}
         ]
 
@@ -173,8 +179,8 @@ class TestHydrate:
         monkeypatch.setattr("src.warehouse.hydrate.load_mcp_tools", fake_load)
         await hydrate_session("t-ana", "ana@example.com")
         await hydrate_session("t-ben", "ben@example.com")
-        assert fetch_rows('SELECT "FullName" FROM team_reach', "t-ana") == [{"FullName": "Ana"}]
-        assert fetch_rows('SELECT "FullName" FROM team_reach', "t-ben") == [{"FullName": "Ben"}]
+        assert fetch_rows('SELECT "FullName" FROM my_teams_reach', "t-ana") == [{"FullName": "Ana"}]
+        assert fetch_rows('SELECT "FullName" FROM my_teams_reach', "t-ben") == [{"FullName": "Ben"}]
 
 
 @pytest.mark.asyncio

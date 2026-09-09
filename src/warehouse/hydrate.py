@@ -10,16 +10,49 @@ import json
 import logging
 from typing import Any
 
-from src.mcp_client import load_mcp_tools
+from src.mcp_client import load_mcp_tools, table_name_for_tool
 from src.warehouse.store import has_session, load_session, session_summary
 
 logger = logging.getLogger(__name__)
 
-# The two reports become the two tables the text-to-SQL tool can see.
-_TABLE_FOR_TOOL = {
-    "get_my_teams_reach_data": "team_reach",
-    "get_award_reasons_data": "award_reasons",
-}
+
+def _required_args(tool: Any) -> list[str]:
+    """Argument names the tool cannot be called without."""
+    schema = getattr(tool, "args_schema", None)
+    if isinstance(schema, dict):
+        return list(schema.get("required") or [])
+    fields = getattr(schema, "model_fields", None)
+    if isinstance(fields, dict):
+        return [name for name, f in fields.items() if getattr(f, "is_required", lambda: False)()]
+    return []
+
+
+def _tables_for(tools: list) -> dict:
+    """Map each no-argument report tool to a table name.
+
+    Derived from the tool names rather than hardcoded, so an MCP server this
+    repo has never seen still produces a usable catalog. Tools that require
+    arguments are skipped: hydrate calls them with none, and a report that needs
+    parameters is a live lookup, not a snapshot.
+    """
+    mapping: dict = {}
+    taken: set = set()
+    for tool in tools:
+        required = _required_args(tool)
+        if required:
+            logger.info(
+                "warehouse hydrate: skipping %s (needs %s)", tool.name, ", ".join(required)
+            )
+            continue
+        table = table_name_for_tool(tool.name)
+        if table in taken:
+            suffix = 2
+            while f"{table}_{suffix}" in taken:
+                suffix += 1
+            table = f"{table}_{suffix}"
+        taken.add(table)
+        mapping[table] = tool
+    return mapping
 
 
 def coerce_rows(payload: Any) -> list[dict[str, Any]]:
@@ -61,17 +94,12 @@ async def hydrate_session(session_id: str, email: str) -> dict[str, Any]:
         return summary
 
     tools = await load_mcp_tools(email)
-    by_name = {tool.name: tool for tool in tools}
     tables: dict[str, list[dict[str, Any]]] = {}
-    for tool_name, table in _TABLE_FOR_TOOL.items():
-        tool = by_name.get(tool_name)
-        if tool is None:
-            tables[table] = []
-            continue
+    for table, tool in _tables_for(tools).items():
         try:
             tables[table] = await _tool_rows(tool)
         except Exception:
-            logger.exception("warehouse hydrate: %s failed", tool_name)
+            logger.exception("warehouse hydrate: %s failed", tool.name)
             tables[table] = []
 
     load_session(session_id, tables)

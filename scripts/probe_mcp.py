@@ -1,15 +1,15 @@
-"""Print the tools a JobPts MCP scope actually exposes.
+"""Print the tools an MCP scope actually exposes.
 
-Stage 2 of the workshop depends on knowing the real tool names: the agent's
-allowlist is matched against them, and the system prompt documents them. A name
-that drifts on the server side silently removes the tool from the agent, so this
-probe is the first thing to run against a new endpoint.
+Run this first when pointing the agent at a new server. It connects exactly the
+way :mod:`src.mcp_client` does — same URL, transport and identity header — so a
+scope that probes clean is one the agent can reach.
 
-    python scripts/probe_mcp.py                    # scope=analytics
+    python scripts/probe_mcp.py                    # the configured scope
     python scripts/probe_mcp.py --scope shared     # any other scope
     python scripts/probe_mcp.py --schemas          # include input schemas
 
-Reads MCP_BASE_URL and MCP_USER_EMAIL from the environment (or .env).
+Reads MCP_BASE_URL, MCP_SCOPE, MCP_URL, MCP_URL_TEMPLATE, MCP_TRANSPORT,
+MCP_USER_HEADER and MCP_USER_EMAIL from the environment (or .env).
 """
 
 import argparse
@@ -17,27 +17,40 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 load_dotenv(interpolate=False)
 
+# Import the real connection settings rather than restating them: a probe that
+# connects differently from the agent can report success the agent cannot repeat.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.mcp_client import (  # noqa: E402
+    MCP_TRANSPORT,
+    MCP_USER_HEADER,
+    scope_url,
+    table_name_for_tool,
+)
+
 DEFAULT_BASE_URL = os.getenv("MCP_BASE_URL", "https://jobptsapi.semoscloud.com")
+DEFAULT_SCOPE = os.getenv("MCP_SCOPE", "analytics")
 DEFAULT_EMAIL = os.getenv("MCP_USER_EMAIL", "")
 
 
 async def probe(base_url: str, scope: str, email: str, show_schemas: bool) -> int:
-    url = f"{base_url.rstrip('/')}/mcp/sse?scope={scope}"
+    url = scope_url(base_url, scope)
     print(f"Connecting to {url}")
-    print(f"  x-mcp-user-email: {email or '(none)'}\n")
+    print(f"  transport: {MCP_TRANSPORT}")
+    print(f"  {MCP_USER_HEADER}: {email or '(none)'}\n")
 
     client = MultiServerMCPClient(
         {
             scope: {
                 "url": url,
-                "transport": "sse",
-                "headers": {"x-mcp-user-email": email} if email else {},
+                "transport": MCP_TRANSPORT,
+                "headers": {MCP_USER_HEADER: email} if email else {},
             }
         }
     )
@@ -49,7 +62,7 @@ async def probe(base_url: str, scope: str, email: str, show_schemas: bool) -> in
 
     print(f"{len(tools)} tool(s) in scope {scope!r}:\n")
     for tool in tools:
-        print(f"  {tool.name}")
+        print(f"  {tool.name}   (warehouse table: {table_name_for_tool(tool.name)})")
         description = (tool.description or "").strip().splitlines()
         if description:
             print(f"      {description[0][:140]}")
@@ -59,14 +72,17 @@ async def probe(base_url: str, scope: str, email: str, show_schemas: bool) -> in
                 print(f"      args: {json.dumps(schema.get('properties', {}), indent=8)[:1200]}")
         print()
 
-    print("Copy these names verbatim into ALLOWED_TOOLS in src/mcp_client.py.")
+    print(
+        "Set MCP_ALLOWED_TOOLS to the names you want the agent to have "
+        "(comma-separated), or leave it blank to allow all of them."
+    )
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    parser.add_argument("--scope", default="analytics")
+    parser.add_argument("--scope", default=DEFAULT_SCOPE)
     parser.add_argument("--email", default=DEFAULT_EMAIL)
     parser.add_argument("--schemas", action="store_true", help="print input schemas")
     args = parser.parse_args()

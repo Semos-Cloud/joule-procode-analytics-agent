@@ -127,13 +127,13 @@ team. The agent cannot ask for someone else's data because it never writes the
 query. This is also why tools are loaded per request rather than at import time.
 
 **The agent sees a subset of the scope.** The `analytics` scope exposes nine
-tools; `ALLOWED_TOOLS` narrows it to the two this agent needs. Reach it does not
-need is surface it can get wrong.
+tools; `MCP_ALLOWED_TOOLS` narrows it to the two this agent needs. Reach it does
+not need is surface it can get wrong.
 
-That allowlist has a sharp edge worth showing: if the server renames a tool, the
-name silently stops matching and the agent loses its data source — and an agent
-without data tends to start guessing. So a missing allowlisted tool raises at
-startup instead:
+Leave that variable blank and the agent gets every tool the scope offers — which
+is what makes a new server work without touching code. Pin it once you know the
+names, because a missing allowlisted tool then raises at startup rather than
+silently disappearing:
 
 ```python
 missing = ALLOWED_TOOLS - by_name.keys()
@@ -141,9 +141,14 @@ if missing:
     raise RuntimeError(...)
 ```
 
+An agent quietly missing its data tool starts guessing; one that will not start
+is easier to debug at 9am in front of a room.
+
 This is a real bug from the production codebase, where an allowlist and a prompt
 disagreed about whether a tool was called `get_award_reasons_data` or
-`get_monetary_and_nonMonetary_award_reasons_data`.
+`get_monetary_and_nonMonetary_award_reasons_data`. That whole class of bug is
+gone now: the prompt's tool descriptions are generated from the server's own
+metadata, so there is no second copy of a tool name to drift.
 
 ### Local mart (text-to-SQL)
 
@@ -159,13 +164,69 @@ loads again.
 
 [src/warehouse/](src/warehouse/) · [tests/test_warehouse.py](tests/test_warehouse.py)
 
+## Point it at your own MCP server
+
+Nothing in Stage 2 or Stage 3 is specific to this data. To run the workshop
+against your own server, there is no code to edit — three groups of environment
+variables, and one paragraph of English.
+
+**1. Find out what your server exposes.** The probe connects exactly the way the
+agent does, so a scope that probes clean is one the agent can reach:
+
+```bash
+.venv/bin/python scripts/probe_mcp.py
+```
+
+It prints each tool, its description, and the DuckDB table its rows will land in.
+
+**2. Point at it.**
+
+| Variable | Default | When you change it |
+|---|---|---|
+| `MCP_BASE_URL` | — | Always |
+| `MCP_SCOPE` | `analytics` | Your server's scope name |
+| `MCP_URL` | blank | Your URL is not `{base}/mcp/sse?scope={scope}` — this overrides the template outright |
+| `MCP_URL_TEMPLATE` | `{base}/mcp/sse?scope={scope}` | A different but still templated shape |
+| `MCP_TRANSPORT` | `sse` | Your server speaks `streamable_http` |
+| `MCP_USER_HEADER` | `x-mcp-user-email` | Your server reads identity from another header |
+| `MCP_ALLOWED_TOOLS` | blank (= all) | Pin it once you know the names |
+| `MCP_USER_EMAIL` | — | Who the server should scope to — your address |
+
+**3. Say who the agent is.** `AGENT_PERSONA` replaces the opening lines of the
+system prompt. This is the one thing that cannot be derived, because "what is
+this data for" is not in any tool schema:
+
+```bash
+AGENT_PERSONA="You are a logistics assistant for warehouse supervisors. You answer questions about open orders and delivery delays, using read-only reports. You never send, create or change anything."
+```
+
+Everything else adapts on its own:
+
+- **Tool descriptions** are generated from the server's metadata each turn
+  ([prompts.py](src/agent/prompts.py) `render_tools_block`).
+- **Warehouse tables** are named from the tool names — `listOpenOrders` becomes
+  `open_orders` — and tools that require arguments are skipped, because a report
+  needing parameters is a live lookup rather than a snapshot.
+- **The SQL schema** was never static: columns come from whatever rows arrived
+  ([store.py](src/warehouse/store.py) `schema_text`).
+- **The UI contract, gateway and Joule capability** carry no domain knowledge at
+  all. Only the Agent Card's wording in [cards.py](src/gateway/cards.py) is
+  cosmetic-but-visible, and Joule uses its `examples` for routing — so rewrite
+  those when you change domains.
+
 ## Stage 3 — Reasoning
 
 [src/agent/graph.py](src/agent/graph.py) · [src/agent/prompts.py](src/agent/prompts.py) · [src/config.py](src/config.py)
 
 Deliberately no agent framework beyond LangGraph and no factory: the whole agent
-is one readable file. Tools are assembled in `_tools_for`: the two MCP reports,
-then `query_local_warehouse`.
+is one readable file. Tools are assembled in `_tools_for`: the allowed MCP
+reports, then `query_local_warehouse`.
+
+The system prompt is assembled the same way. `build_system_prompt` takes the
+tools that were *actually bound this turn* and renders their real names,
+descriptions and arguments — so the model is never told about a tool it does not
+have. What stays hand-written is the persona (`AGENT_PERSONA`) and the grounding
+rules, because those are judgement, not metadata.
 
 ```
 START -> hydrate -> agent <-> tools

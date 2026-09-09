@@ -48,7 +48,16 @@ from src.gateway.runner import AGENT_RUNTIME, get_runner
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-DEV_FALLBACK_USER_EMAIL = os.environ.get("DEV_FALLBACK_USER_EMAIL", "")
+# Who the agent answers as when no identity arrives in the request.
+#
+# MCP_USER_EMAIL is the one knob to set: it is the same value probe_mcp.py uses,
+# and the MCP server scopes every query to that person's team. Attendees put
+# their own address there and get their own data. DEV_FALLBACK_USER_EMAIL stays
+# supported so existing .env files keep working, but it is no longer required —
+# two variables meaning "who am I" is one too many.
+DEV_FALLBACK_USER_EMAIL = (
+    os.environ.get("DEV_FALLBACK_USER_EMAIL") or os.environ.get("MCP_USER_EMAIL", "")
+)
 
 # Captures the inbound Authorization header for the executor, which the A2A SDK
 # does not hand through directly.

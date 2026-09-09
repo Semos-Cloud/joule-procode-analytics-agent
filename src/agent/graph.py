@@ -59,7 +59,11 @@ def _user_email(config: RunnableConfig | None) -> str:
     agent is runnable locally without a token.
     """
     configurable = (config or {}).get("configurable") or {}
-    return configurable.get("user_email") or os.getenv("DEV_FALLBACK_USER_EMAIL", "")
+    return (
+        configurable.get("user_email")
+        or os.getenv("DEV_FALLBACK_USER_EMAIL")
+        or os.getenv("MCP_USER_EMAIL", "")
+    )
 
 
 # ── session hydrate ──────────────────────────────────────────────────────────
@@ -82,9 +86,12 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
 
     llm = load_chat_model(AGENT_MODEL).bind_tools(tools, parallel_tool_calls=False)
 
+    # The tools bound this turn are the same list the prompt describes, so the
+    # model can never be told about a tool it does not have.
     system = build_system_prompt(
         today=datetime.now(UTC).strftime("%Y-%m-%d"),
         user_email=email,
+        tools=tools,
     )
     response = await llm.ainvoke([SystemMessage(content=system), *state["messages"]], config)
     return {"messages": [response]}
