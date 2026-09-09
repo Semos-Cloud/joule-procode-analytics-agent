@@ -16,3 +16,4 @@ venv/
 
 .DS_Store
 *.log
+docs/joule-agent-manual.html

@@ -152,6 +152,9 @@ def schema_text(session_id: str) -> str:
             "Rules\n"
             "  - One statement. SELECT / WITH / FROM only.\n"
             "  - Prefer LIMIT 20 unless the question needs more (hard cap is 50).\n"
+            "  - Ranking questions (top, most, least, best, worst, 'moved most')\n"
+            "    return the ORDERED SET, not LIMIT 1. The caller needs the\n"
+            "    runners-up to answer properly and to draw a chart.\n"
             "  - Return names and measures, not internal ids."
         )
         return "\n".join(parts)

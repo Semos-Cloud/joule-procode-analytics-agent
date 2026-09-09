@@ -26,3 +26,6 @@ joule/
 docker-compose.yaml
 Dockerfile.gateway
 Dockerfile.langgraph
+
+# Documentation. Not needed at runtime.
+docs/

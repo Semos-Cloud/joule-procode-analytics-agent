@@ -29,6 +29,33 @@ reports. You never send, create or change anything.\
 
 PERSONA: str = os.getenv("AGENT_PERSONA", "").strip() or DEFAULT_PERSONA
 
+# Domain judgement, and the one thing tool metadata cannot give you.
+#
+# A tool schema tells the model a tool's name and arguments. It does not say
+# which tool answers which kind of question, or what an ambiguous phrase means
+# in this data. Generating the tools block from the MCP server removed a
+# hand-written block that happened to carry that steering, and the agent started
+# reading "who moved most on engagement" as a quarter-over-quarter delta, finding
+# no time series, and refusing to answer.
+#
+# So it gets its own variable rather than going back into the tool block: still
+# no code edit to point at another server, but the judgement is explicit instead
+# of smuggled in beside the tool names.
+DEFAULT_GUIDANCE = """\
+- "Engagement index" is a percentage already present per person in the team
+  reach report. "Who moved most on engagement", "who is most engaged" and
+  "best engagement" all mean: rank people by that index and name the leaders.
+  There is no historical series to difference, so never report a change between
+  periods as missing data - answer the ranking question that was meant.
+- Per-person questions (ranking people, who gave or received most, who is not
+  participating) come from the team reach report.
+- Reason or theme questions (which award reasons, monetary versus non-monetary)
+  come from the award reasons report.
+- Quarters are calendar quarters. "Last quarter" is the last COMPLETED one.\
+"""
+
+GUIDANCE: str = os.getenv("AGENT_GUIDANCE", "").strip() or DEFAULT_GUIDANCE
+
 RULES = """\
 CHOOSING A TOOL
   - A straightforward pull of one report -> call that report's tool directly.
@@ -36,6 +63,13 @@ CHOOSING A TOOL
     warehouse tool.
   - The snapshot is this user's data from session start. Say so if you use it;
     do not add a warehouse count to a later live count.
+
+RANKING QUESTIONS - read this before asking for one row
+  "Who is top", "who moved most", "who is least active" and "best/worst" are
+  comparisons. Retrieve the WHOLE set and rank it yourself. Never ask a tool for
+  a single row: with one row you cannot say who came second, you cannot show a
+  chart worth looking at, and you have no way to know the top row is meaningful.
+  Ask for every candidate, then name the leader and the ones behind them.
 
 HANDLING DATES
   Convert relative periods to explicit bounds yourself before calling a tool.
@@ -51,8 +85,9 @@ HOW TO ANSWER
   3. Lead with the answer to the question that was asked, then support it. Name
      the entities that matter and give their numbers. For ranking questions
      ("best senders", "who received the most", "moved most") always state the
-     metric and the value for each one named - not just a label. Keep it short
-     enough to read in the flow of work.
+     metric and the value for each one named - not just a label - and name
+     several, not only the winner. Keep it short enough to read in the flow of
+     work.
   4. Offer one genuinely useful follow-up, if there is one.
 
 GROUNDING AND SCOPE - these are hard rules
@@ -144,11 +179,13 @@ def build_system_prompt(today: str, user_email: str = "", tools: List[Any] | Non
     context = (
         f"You are speaking with the user whose account is {user_email}." if user_email else ""
     )
+    guidance = f"DOMAIN NOTES\n\n{GUIDANCE}" if GUIDANCE else ""
     return "\n\n".join(
         part
         for part in (
             PERSONA,
             render_tools_block(tools or []),
+            guidance,
             RULES,
             f"Current date: {today}.",
             context,

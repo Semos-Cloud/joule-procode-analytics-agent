@@ -192,13 +192,25 @@ It prints each tool, its description, and the DuckDB table its rows will land in
 | `MCP_ALLOWED_TOOLS` | blank (= all) | Pin it once you know the names |
 | `MCP_USER_EMAIL` | — | Who the server should scope to — your address |
 
-**3. Say who the agent is.** `AGENT_PERSONA` replaces the opening lines of the
-system prompt. This is the one thing that cannot be derived, because "what is
-this data for" is not in any tool schema:
+**3. Say who the agent is, and what it should know.** Two variables, and they
+are the only things that cannot be derived — because "what is this data for" and
+"which tool answers which question" appear in no tool schema:
 
 ```bash
 AGENT_PERSONA="You are a logistics assistant for warehouse supervisors. You answer questions about open orders and delivery delays, using read-only reports. You never send, create or change anything."
+
+AGENT_GUIDANCE="- 'Delay' means the gap between promised and actual delivery date, already a column on the orders report; there is no history to difference.
+- Per-order questions come from the open orders report; carrier or route questions come from the delivery report."
 ```
+
+**Do not skip `AGENT_GUIDANCE`.** It is worth a paragraph of its own, because
+leaving it out is how this workshop's own demo broke. Generating the tools block
+from MCP metadata removed some hand-written steering nobody had noticed was
+load-bearing, and the agent began reading "which of my team members moved most on
+engagement" as a quarter-over-quarter delta — found no time series, and refused
+to answer in three runs out of four. The tool names were right, the arguments
+were right, and the answer was still useless. Metadata gives you the *what*.
+The *when* is still yours to write.
 
 Everything else adapts on its own:
 
