@@ -1,0 +1,28 @@
+# Keep the droplet small and, above all, keep .env out of it.
+#
+# src/config.py re-reads .env and OVERWRITES AICORE_* in os.environ. If .env
+# reaches the container it silently clobbers whatever `cf set-env` provided,
+# and you get an opaque "Could not retrieve Authorization token".
+.env
+*.env
+!.env.example
+
+.git/
+.venv/
+venv/
+.langgraph_api/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.DS_Store
+*.log
+
+# Not needed at runtime.
+tests/
+joule/
+docker-compose.yaml
+Dockerfile.gateway
+Dockerfile.langgraph

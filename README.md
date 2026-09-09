@@ -65,11 +65,16 @@ Requires Python 3.11–3.13, an SAP AI Core service key, and reachable MCP serve
 ```bash
 git clone <this repo> && cd joule-procode-agent-workshop
 
-uv venv --python 3.12 .venv          # or: python -m venv .venv
+uv venv --python 3.12 --seed .venv   # --seed installs pip so bare `pip` stays in-venv
 uv pip install --python .venv/bin/python -e ".[gateway,dev]"
 
 cp .env.example .env                 # then fill in AICORE_* and MCP_USER_EMAIL
 ```
+
+`.[dev]` includes `langgraph-cli[inmem]` (needed for `langgraph dev`). Always use
+the venv binaries (`.venv/bin/...` or an activated venv whose `which python`
+shows `.venv`). A Homebrew `pip`/`langgraph` on Python 3.10 will look identical
+on the prompt and fail with a misleading “langgraph-api is not installed” error.
 
 Confirm the data layer before anything else — this is the single most common
 cause of a broken demo:
@@ -81,7 +86,7 @@ cause of a broken demo:
 It prints the tools the MCP server actually exposes. Then run the two processes:
 
 ```bash
-.venv/bin/langgraph dev                                     # agent  :2024
+.venv/bin/langgraph dev --no-browser --allow-blocking       # agent  :2024
 .venv/bin/uvicorn src.gateway.server:app --port 9000        # gateway :9000
 ```
 
@@ -222,12 +227,26 @@ of a specific failure:
 
 ### 4b. The gateway
 
-[src/gateway/server.py](src/gateway/server.py) · [src/gateway/cards.py](src/gateway/cards.py)
+[src/gateway/server.py](src/gateway/server.py) · [src/gateway/runner.py](src/gateway/runner.py) · [src/gateway/cards.py](src/gateway/cards.py)
 
 Joule speaks A2A; LangGraph speaks its own REST API. The gateway adapts between
-them and holds no agent logic. It streams with `stream_mode: ["messages",
-"updates"]` — prose from the first, the `ui` payload from the second — and emits
-both artifacts.
+them and holds no agent logic.
+
+[runner.py](src/gateway/runner.py) is *how* a turn gets run, and there are two
+ways behind one interface — picked with `AGENT_RUNTIME`:
+
+| | `http` | `local` |
+|---|---|---|
+| Runs the graph | on a LangGraph server | in this process |
+| Needs | `langgraph dev`, or Postgres + Redis | nothing |
+| You get | LangGraph Studio, per-node traces | one deployable |
+| Used for | the workshop's dev loop | Cloud Foundry |
+
+`http` streams with `stream_mode: ["messages", "updates"]` — prose from the
+first, the `ui` payload from the second. `local` calls `ainvoke` and reads the
+finished state. Both hand back the same `(narration, ui)` and both finish the
+payload through the same `finalize_ui`, so what Joule receives is identical
+either way.
 
 The Agent Card at `/.well-known/agent.json` is how Joule discovers the agent.
 Its `url` must be the address Joule can actually reach, so it comes from
@@ -259,7 +278,10 @@ Configure one BTP destination:
 
 | Destination | URL |
 |---|---|
-| `ANALYTICS_AGENT` | `https://yolando-copasetic-lorrine.ngrok-free.dev/team-analytics-agent` |
+| `ANALYTICS_AGENT` | `https://yolando-copasetic-lorrine.ngrok-free.dev/analytics-agent` |
+
+The path must match `AGENT_PATH` in [cards.py](src/gateway/cards.py) exactly — a
+mismatch is a bare 404 with nothing in the Joule log to explain it.
 
 Add destination header `ngrok-skip-browser-warning` = `true` so Joule is not
 served the ngrok interstitial. Use `PrincipalPropagation` so the manager's
@@ -289,6 +311,70 @@ joule deploy -c -n "team_analytics_assistant"
 
 `-c` compiles before deploying; `-n` matches `name:` in `da.sapdas.yaml`.
 
+## Deploying to Cloud Foundry
+
+ngrok is fine while you build. For a workshop it is a liability: the tunnel
+drops, the URL changes, and the BTP destination has to be edited under time
+pressure. One `cf push` gives you a stable HTTPS URL instead.
+
+**The deployed shape is one app, not four.** `AGENT_RUNTIME=local` makes the
+gateway import the graph and run it in-process, so the LangGraph server, its
+Postgres and its Redis all disappear — Cloud Foundry has no concept of
+docker-compose anyway, and the alternative is three apps plus two provisioned
+services described in an `mta.yaml`.
+
+```bash
+cf login                                    # org/space with a CF runtime quota
+uv pip compile requirements.in -o requirements.txt
+./scripts/cf_deploy.sh
+```
+
+`cf_deploy.sh` pushes with `--no-start`, sets the environment, then starts —
+because [cards.py](src/gateway/cards.py) reads `A2A_GATEWAY_BASE_URL` at *import*
+time. Set it after the app is running and the Agent Card advertises `localhost`
+to Joule until the next restage.
+
+Then repoint the destination and leave everything else alone — the capability
+YAML goes through the `ANALYTICS_AGENT` alias, which is what that indirection was
+for. No `joule deploy` re-run:
+
+| Destination | URL |
+|---|---|
+| `ANALYTICS_AGENT` | `https://<your-app>.cfapps.<region>.hana.ondemand.com/analytics-agent` |
+
+Drop the `ngrok-skip-browser-warning` header. Keep `PrincipalPropagation`.
+
+### What the shape costs you
+
+`instances: 1`, `--workers 1`, and no autoscaler — this is load-bearing, not
+caution. The checkpointer is in memory and
+[src/warehouse/store.py](src/warehouse/store.py) keys its DuckDB catalogs by
+thread id in a module global. A second replica would round-robin a manager onto a
+process that has never heard of their conversation, and they would silently lose
+their history mid-demo. A restart drops every conversation, which is the right
+trade for a workshop and the wrong one for production — that is when the
+`docker-compose.yaml` shape, with Postgres behind the checkpointer, starts
+earning its complexity.
+
+### Sharp edges
+
+- **`.env` must not reach the container.** [src/config.py](src/config.py)
+  re-reads it and *overwrites* `AICORE_*` in `os.environ`, so a pushed `.env`
+  silently clobbers what `cf set-env` provided. That is what `.cfignore` is for.
+- **`AICORE_CLIENT_SECRET` contains `$`.** `cf_deploy.sh` parses `.env` rather
+  than sourcing it: `source` would let the shell expand the `$` away, which is
+  the same truncation `config.py` works around on the dotenv side. The symptom
+  either way is an opaque "Could not retrieve Authorization token".
+- **The first request is slow.** The Gen AI Hub proxy client (OAuth plus a
+  deployment listing) and the MCP SSE handshake are both lazy. Warm the app with
+  one throwaway call *before* the session.
+- **The route is public and the JWT is not verified** (see the note in
+  [server.py](src/gateway/server.py)). Acceptable for a workshop; not for
+  production.
+
+Falling back is one variable: set `AGENT_RUNTIME=http`, restart, and the
+ngrok + `langgraph dev` path is exactly as it was.
+
 ## The worked example
 
 > A manager asks which of their team members moved most on engagement last
@@ -310,7 +396,9 @@ Run through this before the session, not during it.
 - [ ] `scripts/probe_mcp.py` lists both allowlisted tools
 - [ ] `.env` has AICORE credentials and they resolve `AGENT_MODEL` to a live deployment
 - [ ] `langgraph dev` starts and `/assistants/search` returns the assistant
-- [ ] `curl localhost:9000/health` returns ok
+- [ ] `curl localhost:9000/health` returns ok — check `runtime` and `url` in it
+- [ ] If deployed: `cf app` shows 1/1 running and `/health` reports `"runtime": "local"`
+- [ ] The app has been warmed with one throwaway call (the first is always slow)
 - [ ] The agent card is reachable at the **public** gateway URL, not localhost
 - [ ] The BTP destination points at that public URL and uses principal propagation
 - [ ] `joule login --no-app-tid` succeeds as an IAS user (not a CF technical user)
@@ -344,15 +432,20 @@ src/
   ui_contract.py      STAGE 4a — contract, validation, UI5 manifest builder
   gateway/
     cards.py          STAGE 4b — Agent Card and Skills
+    runner.py         STAGE 4b — run the graph in-process, or over HTTP
     server.py         STAGE 4b — A2A adapter, emits text + ui DataPart
 joule/
   team_analytics_capability/   STAGE 4c — the Joule Skill
 scripts/
   probe_mcp.py        list what the MCP server really exposes
   call_agent.sh       A2A smoke test
+  cf_deploy.sh        push to Cloud Foundry as one app
 tests/
   test_ui_contract.py
   test_warehouse.py
+
+manifest.yml          Cloud Foundry app definition
+requirements.in       runtime deps -> compile to a pinned requirements.txt
 ```
 
 ## Credits

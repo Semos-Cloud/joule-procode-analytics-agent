@@ -113,7 +113,15 @@ def route_after_agent(state: AgentState) -> str:
 # ── graph ────────────────────────────────────────────────────────────────────
 
 
-def build_graph():
+def build_graph(checkpointer=None):
+    """Compile the graph.
+
+    ``checkpointer`` is left unset for the module-level ``graph`` below: the
+    LangGraph server (``langgraph dev``, or the API container) supplies its own
+    and rejects a graph that brought one. The in-process runner used by the
+    deployed gateway has no server to do that, so it passes an ``InMemorySaver``
+    — without one, every turn would start a fresh conversation.
+    """
     builder = StateGraph(AgentState)
 
     builder.add_node("hydrate", hydrate_node)
@@ -127,7 +135,7 @@ def build_graph():
     builder.add_edge("tools", "agent")
     builder.add_edge("ui_synth", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 graph = build_graph()

@@ -9,7 +9,9 @@ What it actually does:
    passes it into the run, so the MCP server scopes the data to the right team.
 2. Maps Joule's ``conversationid`` onto a stable LangGraph thread, so a
    conversation keeps its history across turns.
-3. Streams the run and emits **two artifacts**:
+3. Runs the turn — see :mod:`src.gateway.runner`, which either posts to a
+   LangGraph server or calls the graph in this process — and emits **two
+   artifacts**:
    - ``response`` — the markdown narration, always present;
    - ``ui`` — the structured contract as a DataPart, present only when the
      synth node produced one, with a pre-baked ui5integrationCard manifest
@@ -26,7 +28,6 @@ import os
 import uuid as uuid_mod
 from contextvars import ContextVar
 
-import aiohttp
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import EventQueue
@@ -42,14 +43,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from src.gateway.cards import AGENT_CARD, AGENT_PATH
-from src.ui_contract import build_joule_manifest, validate_contract
+from src.gateway.runner import AGENT_RUNTIME, get_runner
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-LANGGRAPH_API_URL = os.environ.get("LANGGRAPH_API_URL", "http://localhost:8000")
-LANGGRAPH_GRAPH_ID = os.environ.get("LANGGRAPH_GRAPH_ID", "team_analytics")
-A2A_TIMEOUT_SECONDS = int(os.environ.get("A2A_TIMEOUT_SECONDS", "120"))
 DEV_FALLBACK_USER_EMAIL = os.environ.get("DEV_FALLBACK_USER_EMAIL", "")
 
 # Captures the inbound Authorization header for the executor, which the A2A SDK
@@ -60,28 +58,6 @@ _auth_header: ContextVar[str] = ContextVar("_auth_header", default="")
 # deterministic, so the same conversation lands on the same thread on every
 # replica and no mapping table is needed.
 _THREAD_NAMESPACE = uuid_mod.UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
-
-_assistant_id: str | None = None
-
-
-async def _resolve_assistant_id(session: aiohttp.ClientSession) -> str:
-    """Look up the LangGraph assistant UUID for our graph id, once."""
-    global _assistant_id
-    if _assistant_id:
-        return _assistant_id
-    async with session.post(
-        f"{LANGGRAPH_API_URL}/assistants/search",
-        json={"graph_id": LANGGRAPH_GRAPH_ID, "limit": 1},
-    ) as resp:
-        data = await resp.json()
-    if not data:
-        raise RuntimeError(
-            f"No LangGraph assistant found for graph_id={LANGGRAPH_GRAPH_ID!r}. "
-            f"Is the LangGraph server running at {LANGGRAPH_API_URL}?"
-        )
-    _assistant_id = data[0]["assistant_id"]
-    logger.info("Resolved graph %r -> assistant %s", LANGGRAPH_GRAPH_ID, _assistant_id)
-    return _assistant_id
 
 
 def _user_email_from_jwt(authorization: str) -> str:
@@ -120,7 +96,7 @@ def _thread_id(conversation_id: str | None) -> str:
 
 
 class TeamAnalyticsExecutor(AgentExecutor):
-    """Forwards one A2A request to the LangGraph run and streams the result back."""
+    """Forwards one A2A request to the agent and returns the result."""
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         task = context.current_task or new_task(context.message)
@@ -141,8 +117,26 @@ class TeamAnalyticsExecutor(AgentExecutor):
         thread = _thread_id(self._extract_conversation_id(context))
         logger.info("Received: %r (thread %s)", message_text[:200], thread)
 
+        # Log which of the two this came from. Without it, a destination whose
+        # principal propagation is misconfigured is invisible: the JWT lookup
+        # returns "", every manager silently gets DEV_FALLBACK_USER_EMAIL's
+        # team, and the answer still looks perfectly correct.
+        jwt_email = _user_email_from_jwt(_auth_header.get(""))
+        email = jwt_email or DEV_FALLBACK_USER_EMAIL
+        logger.info(
+            "Identity: %s (source=%s)", email or "(none)", "jwt" if jwt_email else "fallback"
+        )
+        if not jwt_email:
+            self._explain_missing_identity(context)
+
+        configurable = {
+            "thread_id": thread,
+            "user_email": email,
+            "client": "joule",
+        }
+
         try:
-            text, ui = await self._run(message_text, thread)
+            text, ui = await get_runner().run(message_text, configurable)
         except Exception as exc:
             logger.exception("Run failed: %s", exc)
             text, ui = "Sorry, I could not complete that request. Please try again.", None
@@ -176,146 +170,33 @@ class TeamAnalyticsExecutor(AgentExecutor):
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:
         raise NotImplementedError("cancel is not supported")
 
-    async def _run(self, message_text: str, thread: str) -> tuple:
-        """Run the graph and return ``(narration, ui_payload_or_None)``."""
-        configurable = {
-            "thread_id": thread,
-            "user_email": _user_email_from_jwt(_auth_header.get("")) or DEV_FALLBACK_USER_EMAIL,
-            "client": "joule",
-        }
-
-        timeout = aiohttp.ClientTimeout(total=A2A_TIMEOUT_SECONDS)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            assistant_id = await _resolve_assistant_id(session)
-
-            async with session.post(
-                f"{LANGGRAPH_API_URL}/threads", json={"thread_id": thread}
-            ) as resp:
-                if resp.status not in (200, 201, 409):
-                    logger.debug("Thread create returned %s", resp.status)
-
-            payload = {
-                "assistant_id": assistant_id,
-                "input": {"messages": [{"role": "user", "content": message_text}]},
-                "config": {"configurable": configurable},
-                # `messages` carries the streamed prose; `updates` carries the
-                # synth node's `ui` state delta. We need both.
-                "stream_mode": ["messages", "updates"],
-            }
-
-            async with session.post(
-                f"{LANGGRAPH_API_URL}/threads/{thread}/runs/stream",
-                json=payload,
-                headers={"Accept": "text/event-stream"},
-            ) as resp:
-                if resp.status != 200:
-                    raise RuntimeError(f"LangGraph returned {resp.status}: {await resp.text()}")
-                return await self._consume(resp)
-
     @staticmethod
-    async def _consume(resp) -> tuple:
-        """Read the SSE stream into (final narration, ui payload).
+    def _explain_missing_identity(context: RequestContext) -> None:
+        """Say *why* the JWT produced no user, on the failure path only.
 
-        Read in fixed-size chunks rather than by line: a single SSE data line can
-        carry a few hundred rows of tool output and would overflow a line buffer.
+        A destination whose principal propagation is misconfigured is otherwise
+        silent: everyone quietly gets DEV_FALLBACK_USER_EMAIL's team and the
+        answers still look right. This distinguishes "no Authorization header
+        arrived" from "one arrived that we could not read".
+
+        Shapes and names only — never a token value or a claim value.
         """
-        narration = ""
-        ui = None
-
-        event_type = ""
-        data_buffer = ""
-        raw = b""
-
-        def _flush_event() -> None:
-            nonlocal event_type, data_buffer, narration, ui
-            if not data_buffer:
-                event_type, data_buffer = "", ""
-                return
-            try:
-                data = json.loads(data_buffer)
-            except json.JSONDecodeError:
-                data = None
-            if data is not None and event_type.startswith("messages"):
-                # LangGraph 0.13 emits messages / messages/partial /
-                # messages/complete. Gen AI Hub often sends content as a list
-                # of blocks, not a string — treating only strings left
-                # narration empty and Joule showed "(no response from agent)".
-                #
-                # ui_synth then emits a second AIMessage that is only a
-                # tool call (no text). Ignore those: overwriting narration with
-                # an empty string shipped Joule's placeholder as the text
-                # artifact even when the agent had already answered.
-                msg = data[0] if isinstance(data, list) and data else data
-                if isinstance(msg, dict) and msg.get("type") == "ai":
-                    text = TeamAnalyticsExecutor._message_text(msg.get("content"))
-                    if text:
-                        narration = text
-            elif data is not None and event_type == "updates":
-                found = TeamAnalyticsExecutor._find_ui(data)
-                if found is not None:
-                    ui = found
-            event_type, data_buffer = "", ""
-
-        async for chunk in resp.content.iter_chunked(65536):
-            raw += chunk
-            while b"\n" in raw:
-                line_bytes, raw = raw.split(b"\n", 1)
-                line = line_bytes.rstrip(b"\r").decode("utf-8", errors="replace")
-
-                if line.startswith("event:"):
-                    event_type, data_buffer = line[6:].strip(), ""
-                elif line.startswith("data:"):
-                    data_buffer += line[5:]
-                elif not line:
-                    _flush_event()
-        if data_buffer:
-            _flush_event()
-
-        if ui is not None:
-            # Re-validate: the payload was already checked in-graph, but the
-            # stream is untrusted input to this process and the check is cheap
-            # and idempotent.
-            ui = validate_contract(
-                ui.get("render"), ui.get("fields"), ui.get("items"), ui.get("actions"), ui.get("chart")
-            )
-            manifest = build_joule_manifest(ui["render"], ui["fields"], ui["items"], ui["actions"])
-            if manifest is not None:
-                ui["manifest"] = manifest
-            logger.info("UI DataPart: render=%s manifest=%s", ui["render"], manifest is not None)
-
-        return narration or "(no response from agent)", ui
-
-    @staticmethod
-    def _message_text(content) -> str:
-        """Flatten an AI message content field to plain text."""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for block in content:
-                if isinstance(block, str) and block:
-                    parts.append(block)
-                elif isinstance(block, dict):
-                    text = block.get("text") or block.get("content")
-                    if isinstance(text, str) and text:
-                        parts.append(text)
-            return "".join(parts)
-        return ""
-
-    @staticmethod
-    def _find_ui(update: dict) -> dict | None:
-        """Pull the ``ui`` payload out of an updates event.
-
-        Scans node outputs by shape rather than by node name, so renaming the
-        synth node does not silently break rendering.
-        """
-        if not isinstance(update, dict):
-            return None
-        found = None
-        for node_output in update.values():
-            if isinstance(node_output, dict) and isinstance(node_output.get("ui"), dict):
-                found = node_output["ui"]
-        return found
+        raw = _auth_header.get("")
+        if not raw:
+            shape = "absent"
+        else:
+            scheme, _, rest = raw.partition(" ")
+            shape = f"scheme={scheme!r} segments={len(rest.split('.')) if rest else 0}"
+        try:
+            names = sorted(context.call_context.state.get("headers") or {})
+        except (AttributeError, TypeError):
+            names = []
+        logger.info(
+            "No identity in request: Authorization %s; headers seen: %s. "
+            "Check the BTP destination forwards the user token.",
+            shape,
+            ", ".join(names) or "(none visible)",
+        )
 
     @staticmethod
     def _extract_text(context: RequestContext) -> str:
@@ -388,10 +269,18 @@ def _build_app() -> Starlette:
             )
 
     async def health(_request):
-        return JSONResponse({"status": "ok", "agent": AGENT_CARD.name, "path": f"/{AGENT_PATH}"})
+        return JSONResponse(
+            {
+                "status": "ok",
+                "agent": AGENT_CARD.name,
+                "path": f"/{AGENT_PATH}",
+                "runtime": AGENT_RUNTIME,
+                "url": AGENT_CARD.url,
+            }
+        )
 
     routes.append(Route("/health", health))
-    logger.info("A2A agent registered at /%s -> graph %r", AGENT_PATH, LANGGRAPH_GRAPH_ID)
+    logger.info("A2A agent registered at /%s (runtime=%s)", AGENT_PATH, AGENT_RUNTIME)
 
     return Starlette(routes=routes, middleware=[Middleware(AuthContextMiddleware)])
 

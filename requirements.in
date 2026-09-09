@@ -1,0 +1,26 @@
+# Runtime dependencies for the Cloud Foundry app. Mirrors pyproject's base
+# dependencies plus the [gateway] extra — the app is both the agent and the
+# gateway now.
+#
+# Deliberately absent: langgraph-cli and langgraph-api (there is no LangGraph
+# server in this deployment), the postgres extra (no checkpoint database), and
+# the dev extra.
+#
+# Compile to a pinned requirements.txt before pushing:
+#     uv pip compile requirements.in -o requirements.txt
+# Pinning is the point: workshop day should stage exactly what worked locally.
+
+langgraph>=1.2.11,<2.0
+langchain-core>=1.6,<2.0
+langchain-openai>=1.1,<2.0
+langchain-mcp-adapters>=0.1,<0.2
+mcp>=1.9,<2.0
+sap-ai-sdk-gen>=6.7.0,<7.0.0
+pydantic>=2.12,<3.0
+python-dotenv>=1.0
+duckdb>=1.1,<2.0
+
+a2a-sdk[http-server]>=0.3.25,<1.0
+starlette>=0.40.0
+uvicorn[standard]>=0.30.0
+aiohttp>=3.9.0

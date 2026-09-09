@@ -12,7 +12,7 @@ metadata:
 
 # Binds the logical name used in the function to a BTP destination. The
 # destination is configured in the BTP cockpit and points at this gateway's
-# /team-analytics-agent path. Keeping it indirect means moving the gateway to a
+# /analytics-agent path. Keeping it indirect means moving the gateway to a
 # new host is a destination change, not a redeploy of the capability.
 system_aliases:
   ANALYTICS_AGENT:

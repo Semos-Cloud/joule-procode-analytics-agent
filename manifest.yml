@@ -1,0 +1,44 @@
+# Cloud Foundry deployment — the whole agent as ONE app.
+#
+# `AGENT_RUNTIME: local` makes the gateway import the graph and run it in this
+# process, so there is no LangGraph server, no Postgres, no Redis and no tunnel:
+# one `cf push` is the entire deployment. See src/gateway/runner.py.
+#
+# Deploy with scripts/cf_deploy.sh, not `cf push` on its own — the Agent Card
+# URL and the AI Core credentials have to be in the environment before the app
+# starts, so the script pushes with --no-start, sets them, then starts.
+---
+applications:
+  - name: joule-analytics-agent
+    # Conversation state (the in-memory checkpointer) and the per-thread DuckDB
+    # catalogs both live in this process. A second instance or a second worker
+    # would strand managers on a process that has never seen their thread.
+    instances: 1
+    memory: 1G
+    # langchain + duckdb + the AI Core SDK make a fat slug; 1G staging is tight.
+    disk_quota: 2G
+    buildpacks:
+      - python_buildpack
+    command: uvicorn src.gateway.server:app --host 0.0.0.0 --port $PORT --workers 1
+    # CF defaults to a port check, which passes before uvicorn can serve. /health
+    # also confirms the runtime and the advertised Agent Card URL.
+    health-check-type: http
+    health-check-http-endpoint: /health
+    timeout: 180
+    routes:
+      # cfapps.<region> is a shared domain — the hostname must be globally
+      # unique. Change this and A2A_GATEWAY_BASE_URL in scripts/cf_deploy.sh
+      # together; the Agent Card has to advertise the URL Joule really calls.
+      - route: joule-analytics-agent-sc.cfapps.eu10-005.hana.ondemand.com
+    env:
+      AGENT_RUNTIME: local
+      LOG_LEVEL: INFO
+      # Below the platform router's own timeout, so a slow turn surfaces the
+      # agent's error text rather than a bare gateway 504.
+      A2A_TIMEOUT_SECONDS: 240
+      MCP_BASE_URL: https://jobptsapi.semoscloud.com
+      MCP_SCOPE: analytics
+      AICORE_RESOURCE_GROUP: default
+      AGENT_MODEL: gpt-4.1-mini
+      UI_SYNTH_MODEL: gpt-4.1-mini
+      MAX_TOKENS: 4096

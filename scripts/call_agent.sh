@@ -12,7 +12,7 @@
 set -euo pipefail
 
 GATEWAY="${GATEWAY:-http://localhost:9000}"
-AGENT_PATH="${AGENT_PATH:-team-analytics-agent}"
+AGENT_PATH="${AGENT_PATH:-analytics-agent}"
 MESSAGE="${1:-Which of my team members moved most on engagement last quarter?}"
 
 # Joule sends a conversationid so turns land on the same thread. Reuse one value

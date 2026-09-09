@@ -33,6 +33,11 @@ dependencies = [
 # `new_data_artifact` (used to emit the UI DataPart) requires a2a-sdk >= 0.3.25.
 gateway = [
     "a2a-sdk[http-server]>=0.3.25,<1.0",
+    # a2a-sdk pulls google-api-core. 2.36+ requires opentelemetry-api>=1.44,
+    # which conflicts with langgraph-api's pin of
+    # opentelemetry-exporter-prometheus<0.64 (otel 1.42). Stay on 2.35 until
+    # langgraph-api relaxes that bound.
+    "google-api-core>=1.26.0,<2.36",
     "starlette>=0.40.0",
     "uvicorn[standard]>=0.30.0",
     "aiohttp>=3.9.0",
@@ -47,6 +52,8 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
+    # Local `langgraph dev` (in-mem API server). Requires Python >=3.11.
+    "langgraph-cli[inmem]>=0.4,<1.0",
 ]
 
 [build-system]
