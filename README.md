@@ -68,7 +68,7 @@ git clone <this repo> && cd joule-procode-agent-workshop
 uv venv --python 3.12 --seed .venv   # --seed installs pip so bare `pip` stays in-venv
 uv pip install --python .venv/bin/python -e ".[gateway,dev]"
 
-cp .env.example .env                 # then fill in AICORE_* and MCP_USER_EMAIL
+cp .env.example .env                 # then fill in AICORE_*, MCP_BASE_URL and MCP_USER_EMAIL
 ```
 
 `.[dev]` includes `langgraph-cli[inmem]` (needed for `langgraph dev`). Always use
@@ -468,7 +468,7 @@ Run through this before the session, not during it.
 
 - [ ] `scripts/probe_mcp.py` lists both allowlisted tools
 - [ ] `.env` has AICORE credentials and they resolve `AGENT_MODEL` to a live deployment
-- [ ] `langgraph dev` starts and `/assistants/search` returns the assistant
+- [ ] `langgraph dev --allow-blocking` starts and `/assistants/search` returns the assistant
 - [ ] `curl localhost:9000/health` returns ok — check `runtime` and `url` in it
 - [ ] If deployed: `cf app` shows 1/1 running and `/health` reports `"runtime": "local"`
 - [ ] The app has been warmed with one throwaway call (the first is always slow)

@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 
-from src.config import AGENT_MODEL, load_chat_model
+from src.config import AGENT_MODEL, aload_chat_model
 from src.warehouse.hydrate import hydrate_session
 from src.warehouse.sql_guard import (
     apply_limit,
@@ -52,7 +52,7 @@ def _message_text(message: Any) -> str:
 
 
 async def _generate_sql(question: str, session_id: str, *, prior_sql: str = "", error: str = "") -> str:
-    llm = load_chat_model(AGENT_MODEL, stream_usage=False)
+    llm = await aload_chat_model(AGENT_MODEL, stream_usage=False)
     human = question
     if prior_sql and error:
         human = (

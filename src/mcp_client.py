@@ -43,13 +43,13 @@ load_dotenv(interpolate=False)
 
 logger = logging.getLogger(__name__)
 
-MCP_BASE_URL: str = os.getenv("MCP_BASE_URL", "https://jobptsapi.semoscloud.com")
-MCP_SCOPE: str = os.getenv("MCP_SCOPE", "analytics")
+MCP_BASE_URL: str = os.getenv("MCP_BASE_URL") or "https://jobptsapi.semoscloud.com"
+MCP_SCOPE: str = os.getenv("MCP_SCOPE") or "analytics"
 MCP_USER_EMAIL: str = os.getenv("MCP_USER_EMAIL", "")
 MCP_URL: str = os.getenv("MCP_URL", "")
-MCP_URL_TEMPLATE: str = os.getenv("MCP_URL_TEMPLATE", "{base}/mcp/sse?scope={scope}")
-MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT", "sse")
-MCP_USER_HEADER: str = os.getenv("MCP_USER_HEADER", "x-mcp-user-email")
+MCP_URL_TEMPLATE: str = os.getenv("MCP_URL_TEMPLATE") or "{base}/mcp/sse?scope={scope}"
+MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT") or "sse"
+MCP_USER_HEADER: str = os.getenv("MCP_USER_HEADER") or "x-mcp-user-email"
 
 
 def _parse_allowed(raw: str) -> frozenset:

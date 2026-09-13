@@ -34,8 +34,8 @@ from src.mcp_client import (  # noqa: E402
     table_name_for_tool,
 )
 
-DEFAULT_BASE_URL = os.getenv("MCP_BASE_URL", "https://jobptsapi.semoscloud.com")
-DEFAULT_SCOPE = os.getenv("MCP_SCOPE", "analytics")
+DEFAULT_BASE_URL = os.getenv("MCP_BASE_URL") or "https://jobptsapi.semoscloud.com"
+DEFAULT_SCOPE = os.getenv("MCP_SCOPE") or "analytics"
 DEFAULT_EMAIL = os.getenv("MCP_USER_EMAIL", "")
 
 

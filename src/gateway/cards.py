@@ -15,13 +15,13 @@ import os
 
 from a2a.types import AgentCapabilities, AgentCard, AgentSkill
 
-GATEWAY_BASE_URL = os.environ.get("A2A_GATEWAY_BASE_URL", "http://localhost:9000")
+GATEWAY_BASE_URL = os.environ.get("A2A_GATEWAY_BASE_URL") or "http://localhost:9000"
 
 # The path the A2A endpoint is served on. This value and the path in the BTP
 # destination URL must match exactly, or Joule gets a 404 with no useful error.
 # Overridable so a destination that is already registered on a tenant can be
 # matched without a code change.
-AGENT_PATH = os.environ.get("A2A_AGENT_PATH", "analytics-agent")
+AGENT_PATH = os.environ.get("A2A_AGENT_PATH") or "analytics-agent"
 
 AGENT_CARD = AgentCard(
     name="Team Analytics Agent",

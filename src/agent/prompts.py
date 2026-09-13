@@ -140,6 +140,13 @@ def _tool_args(tool: Any) -> List[str]:
             continue
         spec = spec if isinstance(spec, dict) else {}
         kind = spec.get("type") or ""
+        # JSON Schema allows ``type`` to be a list — ``["string", "null"]`` is
+        # how a nullable argument arrives from most MCP servers. Normalise to
+        # one label so the line below is always string concatenation.
+        if isinstance(kind, list):
+            kind = "|".join(str(k) for k in kind if k)
+        elif not isinstance(kind, str):
+            kind = str(kind)
         detail = (spec.get("description") or "").strip().replace("\n", " ")
         flag = "required" if name in required else "optional"
         head = f"      {name} ({kind + ', ' if kind else ''}{flag})"

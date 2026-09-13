@@ -9,6 +9,7 @@ Swapping to another provider means changing this one file. Nothing in the agent,
 the tools, or the UI contract knows which model is behind ``load_chat_model``.
 """
 
+import asyncio
 import logging
 import os
 from functools import lru_cache
@@ -27,7 +28,8 @@ load_dotenv(interpolate=False)
 _ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 if _ENV_FILE.is_file():
     for _key, _val in dotenv_values(_ENV_FILE, interpolate=False).items():
-        if _key and _key.startswith("AICORE_") and _val is not None:
+        # Blank means unset: an empty .env line must not clobber a real value.
+        if _key and _key.startswith("AICORE_") and _val:
             os.environ[_key] = _val
 
 # The AI Core SDK uses ``requests.post`` for the OAuth token. ``requests``
@@ -56,13 +58,13 @@ logger.info(
 )
 
 # The model that does the reasoning and calls the MCP tools.
-AGENT_MODEL: str = os.getenv("AGENT_MODEL", "gpt-4.1-mini")
+AGENT_MODEL: str = os.getenv("AGENT_MODEL") or "gpt-4.1-mini"
 
 # The model behind the Stage 4 UI synthesizer. It only emits a small structured
 # payload, so it does not need to be as capable as the reasoning model.
-UI_SYNTH_MODEL: str = os.getenv("UI_SYNTH_MODEL", AGENT_MODEL)
+UI_SYNTH_MODEL: str = os.getenv("UI_SYNTH_MODEL") or AGENT_MODEL
 
-MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "4096"))
+MAX_TOKENS: int = int(os.getenv("MAX_TOKENS") or "4096")
 
 
 @lru_cache(maxsize=1)
@@ -107,3 +109,25 @@ def load_chat_model(
     llm.stream_usage = stream_usage
     logger.info("Gen AI Hub model ready: %s stream_usage=%s", name, stream_usage)
     return llm
+
+
+async def aload_chat_model(
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+    stream_usage: bool = True,
+) -> BaseChatModel:
+    """``load_chat_model`` moved off the event loop.
+
+    The first call for a model is blocking I/O: Gen AI Hub fetches an OAuth
+    token and lists deployments through the SAP AI Core SDK, which is built on
+    synchronous ``requests``. Called straight from an async node that trips
+    LangGraph's blocking-call guard, and because the SDK catches every
+    exception around the token request it reports the guard's ``BlockingError``
+    as "Could not retrieve Authorization token" — an auth message for what is
+    not an auth problem. Later calls hit the ``lru_cache`` and cost only the
+    thread hop.
+    """
+    return await asyncio.to_thread(
+        load_chat_model, model, temperature, max_tokens, stream_usage
+    )

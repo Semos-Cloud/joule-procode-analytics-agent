@@ -37,7 +37,7 @@ from langgraph.prebuilt import ToolNode
 from src.agent.prompts import build_system_prompt
 from src.agent.state import AgentState
 from src.agent.ui_synth import make_ui_synth_node
-from src.config import AGENT_MODEL, load_chat_model
+from src.config import AGENT_MODEL, aload_chat_model
 from src.mcp_client import load_mcp_tools
 from src.warehouse.hydrate import hydrate_session
 from src.warehouse.store import session_id_from_config
@@ -84,7 +84,7 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
     email = _user_email(config)
     tools = await _tools_for(email)
 
-    llm = load_chat_model(AGENT_MODEL).bind_tools(tools, parallel_tool_calls=False)
+    llm = (await aload_chat_model(AGENT_MODEL)).bind_tools(tools, parallel_tool_calls=False)
 
     # The tools bound this turn are the same list the prompt describes, so the
     # model can never be told about a tool it does not have.

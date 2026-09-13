@@ -34,10 +34,10 @@ from src.ui_contract import build_joule_manifest, validate_contract
 
 logger = logging.getLogger(__name__)
 
-AGENT_RUNTIME = os.environ.get("AGENT_RUNTIME", "http").strip().lower()
-LANGGRAPH_API_URL = os.environ.get("LANGGRAPH_API_URL", "http://localhost:8000")
-LANGGRAPH_GRAPH_ID = os.environ.get("LANGGRAPH_GRAPH_ID", "team_analytics")
-A2A_TIMEOUT_SECONDS = int(os.environ.get("A2A_TIMEOUT_SECONDS", "120"))
+AGENT_RUNTIME = (os.environ.get("AGENT_RUNTIME") or "http").strip().lower()
+LANGGRAPH_API_URL = os.environ.get("LANGGRAPH_API_URL") or "http://localhost:2024"
+LANGGRAPH_GRAPH_ID = os.environ.get("LANGGRAPH_GRAPH_ID") or "team_analytics"
+A2A_TIMEOUT_SECONDS = int(os.environ.get("A2A_TIMEOUT_SECONDS") or "120")
 
 NO_RESPONSE = "(no response from agent)"
 
