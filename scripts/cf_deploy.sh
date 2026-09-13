@@ -30,6 +30,18 @@ fi
 # settings that would be noise in a committed manifest. Anything not listed here
 # is either in manifest.yml or belongs only to the local two-process setup
 # (LANGGRAPH_API_URL, DATABASE_URI, REDIS_URI).
+#
+# The MCP_* and AGENT_PERSONA/AGENT_GUIDANCE keys are the "point it at your own
+# server" knobs from the README. They are carried through on purpose: without
+# them, an attendee who configures their own server in .env and deploys gets an
+# app silently running on the demo defaults in manifest.yml.
+#
+# MCP_ALLOWED_TOOLS is the one exception, left to manifest.yml — see the comment
+# there. Override it with `cf set-env` if you really mean to.
+#
+# Values are read one line at a time, so each must be on a single line in .env.
+# For a multi-line AGENT_GUIDANCE, set it directly instead:
+#     cf set-env joule-analytics-agent AGENT_GUIDANCE "$(cat guidance.txt)"
 ENV_KEYS=(
   AICORE_CLIENT_ID
   AICORE_CLIENT_SECRET
@@ -39,10 +51,16 @@ ENV_KEYS=(
   MCP_BASE_URL
   MCP_SCOPE
   MCP_USER_EMAIL
+  MCP_URL
+  MCP_URL_TEMPLATE
+  MCP_TRANSPORT
+  MCP_USER_HEADER
   DEV_FALLBACK_USER_EMAIL
   AGENT_MODEL
   UI_SYNTH_MODEL
   MAX_TOKENS
+  AGENT_PERSONA
+  AGENT_GUIDANCE
 )
 
 cf target >/dev/null 2>&1 || { echo "Not logged in. Run: cf login" >&2; exit 1; }

@@ -55,6 +55,33 @@ class TestSqlGuard:
         with pytest.raises(ValueError, match="one SQL statement"):
             ensure_readonly("SELECT 1; SELECT 2")
 
+    def test_keywords_inside_string_literals_are_data(self):
+        # An award reason is free text and can contain anything. Scanning the
+        # raw statement read 'Call of Duty' as a CALL and the semicolon as a
+        # second statement, so real questions failed with a guard error.
+        ensure_readonly(
+            "SELECT count(*) FROM award_reasons "
+            "WHERE \"AwardReason\" = 'Above and Beyond the Call of Duty'"
+        )
+        ensure_readonly("SELECT \"FullName\" FROM my_teams_reach WHERE \"Notes\" = 'a;b'")
+
+    def test_allows_read_only_replace(self):
+        # `replace()` is a scalar function the text-to-SQL step reaches for
+        # constantly, and listing REPLACE as forbidden blocked it.
+        ensure_readonly("SELECT replace(\"FullName\", '_', ' ') AS n FROM my_teams_reach")
+
+    def test_a_write_wrapped_around_a_read_is_reduced_to_the_read(self):
+        # Not rejected — defused. extract_sql cuts everything before the first
+        # read keyword, so the write half never reaches DuckDB. This is what
+        # makes REPLACE unnecessary in the forbidden list.
+        assert ensure_readonly("CREATE OR REPLACE TABLE people AS SELECT 1") == "SELECT 1"
+        assert ensure_readonly("INSERT INTO people SELECT * FROM x") == "SELECT * FROM x"
+
+    def test_a_write_with_no_read_to_hide_behind_is_rejected(self):
+        for sql in ("CREATE TABLE t (a INT)", "DROP TABLE people", "ATTACH 'x.db'"):
+            with pytest.raises(ValueError, match="read-only"):
+                ensure_readonly(sql)
+
     def test_allows_with_and_from_first(self):
         assert ensure_readonly("WITH x AS (SELECT 1 AS n) SELECT n FROM x").startswith("WITH")
         assert ensure_readonly("FROM people SELECT full_name").startswith("FROM")

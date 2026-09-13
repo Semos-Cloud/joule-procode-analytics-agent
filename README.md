@@ -481,7 +481,7 @@ Run through this before the session, not during it.
 
 ## Tenant-verify
 
-Two things in [functions/team_analytics_function.yaml](joule/team_analytics_capability/functions/team_analytics_function.yaml)
+Two things in [functions/analytics_function.yaml](joule/team_analytics_capability/functions/analytics_function.yaml)
 depend on the tenant and must be confirmed before the session:
 
 1. **Manifest passthrough.** The YAML passes `data.manifest` straight through as
