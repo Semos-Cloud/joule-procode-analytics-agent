@@ -1,5 +1,5 @@
 schema_version: 1.2.0
-name: team_analytics_assistant
+name: analytics_agent
 capabilities:
   - type: local
     folder: .

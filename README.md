@@ -379,7 +379,7 @@ Then publish:
 
 ```bash
 cd joule/team_analytics_capability
-joule deploy -c -n "team_analytics_assistant"
+joule deploy -c -n "analytics_agent"
 ```
 
 `-c` compiles before deploying; `-n` matches `name:` in `da.sapdas.yaml`.
