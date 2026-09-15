@@ -106,7 +106,11 @@ async def tools_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
     warehouse tool is appended after that list and reads this thread's catalog.
     """
     tools = await _tools_for(_user_email(config))
-    return await ToolNode(tools).ainvoke(state, config)
+    # handle_tool_errors=True: the MCP server rejects a bad argument (a missing
+    # IdUsers, an unparseable date) with a tool error, and the default handler
+    # re-raises anything that is not client-side validation — ending the turn.
+    # Handing the message back lets the model correct the call instead.
+    return await ToolNode(tools, handle_tool_errors=True).ainvoke(state, config)
 
 
 def route_after_agent(state: AgentState) -> str:

@@ -126,9 +126,9 @@ Two design points do the real work:
 team. The agent cannot ask for someone else's data because it never writes the
 query. This is also why tools are loaded per request rather than at import time.
 
-**The agent sees a subset of the scope.** The `analytics` scope exposes nine
-tools; `MCP_ALLOWED_TOOLS` narrows it to the two this agent needs. Reach it does
-not need is surface it can get wrong.
+**The agent sees a subset of the scope.** The `analytics` scope exposes ten
+tools; `MCP_ALLOWED_TOOLS` narrows it to the three this agent needs. Reach it
+does not need is surface it can get wrong.
 
 Leave that variable blank and the agent gets every tool the scope offers — which
 is what makes a new server work without touching code. Pin it once you know the
@@ -152,9 +152,9 @@ metadata, so there is no second copy of a tool name to drift.
 
 ### Local mart (text-to-SQL)
 
-The two MCP tools are fixed reports. For questions that are easier as SQL
+The MCP tools are fixed reports. For questions that are easier as SQL
 (windows, multi-column filters, ranking several measures at once) the graph
-loads those reports into a **per-session** in-memory DuckDB when the
+loads the no-argument ones into a **per-session** in-memory DuckDB when the
 conversation starts, then `query_local_warehouse` compiles English to a
 read-only query against that catalog.
 

@@ -51,6 +51,13 @@ DEFAULT_GUIDANCE = """\
   participating) come from the team reach report.
 - Reason or theme questions (which award reasons, monetary versus non-monetary)
   come from the award reasons report.
+- Individual recognitions - the messages themselves, who recognised whom, which
+  award - come from the per-person recognitions list. Take that person's IdUsers
+  from the team reach report first, and ask only about people it returned.
+  Always pass dateFrom and dateUntil: a whole history runs to thousands of rows
+  and a single call can outlast the turn.
+- Counting or ranking across the team comes from the reach report. Never pull
+  every person's recognition list to answer a question about the team.
 - Quarters are calendar quarters. "Last quarter" is the last COMPLETED one.\
 """
 

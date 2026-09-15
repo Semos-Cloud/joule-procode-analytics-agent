@@ -38,10 +38,10 @@ applications:
       A2A_TIMEOUT_SECONDS: 240
       MCP_BASE_URL: https://jobptsapi.semoscloud.com
       MCP_SCOPE: analytics
-      # Pinned on purpose. Blank would bind all nine tools the scope exposes —
+      # Pinned on purpose. Blank would bind all ten tools the scope exposes —
       # convenient when pointing at a new server, wrong for a demo where the
-      # agent should reach for exactly two reports.
-      MCP_ALLOWED_TOOLS: get_my_teams_reach_data,get_award_reasons_data
+      # agent should reach for exactly these three reports.
+      MCP_ALLOWED_TOOLS: get_my_teams_reach_data,get_award_reasons_data,get_list_of_recognitions_for_employee
       AICORE_RESOURCE_GROUP: default
       AGENT_MODEL: gpt-4.1-mini
       UI_SYNTH_MODEL: gpt-4.1-mini
