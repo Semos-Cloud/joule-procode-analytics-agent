@@ -357,9 +357,10 @@ The path must match `AGENT_PATH` in [cards.py](src/gateway/cards.py) exactly —
 mismatch is a bare 404 with nothing in the Joule log to explain it.
 
 Add destination header `ngrok-skip-browser-warning` = `true` so Joule is not
-served the ngrok interstitial. Use `PrincipalPropagation` so the manager's
-identity reaches the gateway — that is what makes Stage 2's per-user scoping
-work end to end.
+served the ngrok interstitial.
+
+The destination needs no authentication. The agent answers as `MCP_USER_EMAIL`,
+which is what Stage 2 scopes every query to.
 
 Log in to the Joule tenant first. Use `--no-app-tid`: without it, joule-cli
 2.0.2 currently fails IAS login with `AUTH_FETCH_TOKEN_FAILED` (401 immediately,
@@ -415,7 +416,7 @@ for. No `joule deploy` re-run:
 |---|---|
 | `ANALYTICS_AGENT` | `https://<your-app>.cfapps.<region>.hana.ondemand.com/analytics-agent` |
 
-Drop the `ngrok-skip-browser-warning` header. Keep `PrincipalPropagation`.
+Drop the `ngrok-skip-browser-warning` header. Everything else stays as it was.
 
 ### What the shape costs you
 
@@ -473,7 +474,7 @@ Run through this before the session, not during it.
 - [ ] If deployed: `cf app` shows 1/1 running and `/health` reports `"runtime": "local"`
 - [ ] The app has been warmed with one throwaway call (the first is always slow)
 - [ ] The agent card is reachable at the **public** gateway URL, not localhost
-- [ ] The BTP destination points at that public URL and uses principal propagation
+- [ ] The BTP destination points at that public URL
 - [ ] `joule login --no-app-tid` succeeds as an IAS user (not a CF technical user)
 - [ ] `joule deploy` succeeds and the scenario matches your opening utterance
 - [ ] The chart renders in Joule (see tenant-verify below)
