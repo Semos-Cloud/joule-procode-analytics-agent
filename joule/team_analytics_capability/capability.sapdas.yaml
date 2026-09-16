@@ -7,8 +7,10 @@ metadata:
   display_name: Team Analytics Capability
   description: >-
     Answers a manager's questions about how their own team is participating in
-    recognition - engagement index per person, who is giving and receiving, and
-    which award reasons the team uses. Read-only.
+    recognition - engagement index per person, who is giving and receiving,
+    which award reasons the team uses, and the individual recognitions a person
+    received or sent, including the message text and what they were praised
+    for. Read-only.
 
 # Binds the logical name used in the function to a BTP destination. The
 # destination is configured in the BTP cockpit and points at this gateway's

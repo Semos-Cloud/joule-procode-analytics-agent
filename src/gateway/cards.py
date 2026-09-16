@@ -66,5 +66,22 @@ AGENT_CARD = AgentCard(
                 "What is our monetary versus non-monetary mix?",
             ],
         ),
+        AgentSkill(
+            id="recognition-messages",
+            name="Individual Recognition Messages",
+            description=(
+                "The individual recognitions one team member received or sent, including "
+                "the message text, the award and the award reason. Answers what a person "
+                "was praised for, which skills or themes their messages mention, who "
+                "recognised them most, and what they received most recently."
+            ),
+            tags=["analytics", "recognition", "messages", "feedback", "team"],
+            examples=[
+                "What are the top skills mentioned in the messages one of my team members received?",
+                "Show me the latest 3 recognitions a team member received.",
+                "Who has recognised this person the most this year?",
+                "What was she recognised for last quarter?",
+            ],
+        ),
     ],
 )
