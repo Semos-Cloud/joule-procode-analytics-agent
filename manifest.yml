@@ -37,7 +37,9 @@ applications:
       # Below the platform router's own timeout, so a slow turn surfaces the
       # agent's error text rather than a bare gateway 504.
       A2A_TIMEOUT_SECONDS: 240
-      # MCP_BASE_URL is not committed either; cf_deploy.sh sets it from .env.
+      # Left empty on purpose: the host is not committed. cf_deploy.sh sets it
+      # from .env after the push.
+      MCP_BASE_URL: ""
       MCP_SCOPE: analytics
       # Pinned on purpose. Blank would bind all ten tools the scope exposes —
       # convenient when pointing at a new server, wrong for a demo where the
