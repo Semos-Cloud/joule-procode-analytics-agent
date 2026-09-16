@@ -19,10 +19,12 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="${APP_NAME:-joule-analytics-agent}"
 
-# Keep the route in manifest.yml as the single source of truth.
-ROUTE="$(grep -E '^\s*- route:' manifest.yml | head -1 | sed 's/.*route:[[:space:]]*//')"
+# The public hostname lives in .env (CF_ROUTE), not in the committed manifest.
+# It is passed to cf push as a manifest variable and also becomes the Agent
+# Card URL, so the two can never disagree.
+ROUTE="$(grep -E '^CF_ROUTE=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d "\"'" )"
 if [[ -z "$ROUTE" ]]; then
-  echo "Could not read the route from manifest.yml" >&2
+  echo "CF_ROUTE is not set in .env (e.g. CF_ROUTE=my-agent-xyz.cfapps.eu10-005.hana.ondemand.com)" >&2
   exit 1
 fi
 
@@ -71,7 +73,7 @@ if [[ ! -f requirements.txt ]]; then
 fi
 
 echo "==> Pushing $APP_NAME (not starting yet)"
-cf push "$APP_NAME" -f manifest.yml --no-start
+cf push "$APP_NAME" -f manifest.yml --no-start --var CF_ROUTE="$ROUTE"
 
 echo "==> Setting environment"
 

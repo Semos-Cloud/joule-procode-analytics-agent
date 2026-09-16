@@ -92,6 +92,7 @@ async def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any
         today=datetime.now(UTC).strftime("%Y-%m-%d"),
         user_email=email,
         tools=tools,
+        tables=(state.get("warehouse") or {}).get("tables"),
     )
     response = await llm.ainvoke([SystemMessage(content=system), *state["messages"]], config)
     return {"messages": [response]}

@@ -188,11 +188,20 @@ def render_tools_block(tools: List[Any]) -> str:
     return "\n".join(parts).rstrip()
 
 
-def build_system_prompt(today: str, user_email: str = "", tools: List[Any] | None = None) -> str:
+def build_system_prompt(
+    today: str, user_email: str = "", tools: List[Any] | None = None, tables: dict | None = None
+) -> str:
     """Render the system prompt for one turn."""
     context = (
         f"You are speaking with the user whose account is {user_email}." if user_email else ""
     )
+    # hydrate runs before the first model call, but its summary lives only in
+    # graph state. Say what it loaded, or the model pulls a live report on the
+    # first turn every time and only trusts the warehouse from the second turn.
+    if tables := {k: v for k, v in (tables or {}).items() if v}:
+        context += "\nLoaded for this conversation, queryable with the warehouse tool: " + ", ".join(
+            f"{k} ({v} rows)" for k, v in tables.items()
+        )
     guidance = f"DOMAIN NOTES\n\n{GUIDANCE}" if GUIDANCE else ""
     return "\n\n".join(
         part

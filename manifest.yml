@@ -26,17 +26,18 @@ applications:
     health-check-http-endpoint: /health
     timeout: 180
     routes:
-      # cfapps.<region> is a shared domain — the hostname must be globally
-      # unique. Change this and A2A_GATEWAY_BASE_URL in scripts/cf_deploy.sh
-      # together; the Agent Card has to advertise the URL Joule really calls.
-      - route: joule-analytics-agent-sc.cfapps.eu10-005.hana.ondemand.com
+      # The public hostname is not committed. CF_ROUTE comes from .env and
+      # scripts/cf_deploy.sh passes it in with --var; the same value becomes
+      # A2A_GATEWAY_BASE_URL, so the Agent Card advertises the URL Joule calls.
+      # Shape: <unique-hostname>.cfapps.<landscape>.hana.ondemand.com
+      - route: ((CF_ROUTE))
     env:
       AGENT_RUNTIME: local
       LOG_LEVEL: INFO
       # Below the platform router's own timeout, so a slow turn surfaces the
       # agent's error text rather than a bare gateway 504.
       A2A_TIMEOUT_SECONDS: 240
-      MCP_BASE_URL: https://jobptsapi.semoscloud.com
+      # MCP_BASE_URL is not committed either; cf_deploy.sh sets it from .env.
       MCP_SCOPE: analytics
       # Pinned on purpose. Blank would bind all ten tools the scope exposes —
       # convenient when pointing at a new server, wrong for a demo where the
