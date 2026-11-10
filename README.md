@@ -68,7 +68,7 @@ git clone <this repo> && cd joule-procode-agent-workshop
 uv venv --python 3.12 --seed .venv   # --seed installs pip so bare `pip` stays in-venv
 uv pip install --python .venv/bin/python -e ".[gateway,dev]"
 
-cp .env.example .env                 # then fill in AICORE_*, MCP_BASE_URL and MCP_USER_EMAIL
+cp .env.example .env                 # then fill in AICORE_*, MCP_BASE_URL, MCP_USER_EMAIL and MCP_SERVICE_KEY
 ```
 
 `.[dev]` includes `langgraph-cli[inmem]` (needed for `langgraph dev`). Always use
@@ -125,6 +125,16 @@ Two design points do the real work:
 `x-mcp-user-email` header, and the server scopes every query to that person's
 team. The agent cannot ask for someone else's data because it never writes the
 query. This is also why tools are loaded per request rather than at import time.
+With no email to send, loading the tools raises: there is no anonymous
+connection.
+
+**The agent proves it may send that header.** JobPoints trusts
+`x-mcp-user-email` only from a caller that also presents
+`x-mcp-service-key: $MCP_SERVICE_KEY`. It is not `Authorization: Bearer` —
+JobPoints reads a Bearer token as a user session and answers 401. A wrong or
+missing key is a 401; an email JobPoints does not know is a 403. Get the
+per-environment key from the JobPoints team and put it in `.env`; it is a
+secret, so it is never logged and `cf_deploy.sh` prints only its length.
 
 **The agent sees a subset of the scope.** The `analytics` scope exposes ten
 tools; `MCP_ALLOWED_TOOLS` narrows it to the three this agent needs. Reach it
@@ -189,6 +199,8 @@ It prints each tool, its description, and the DuckDB table its rows will land in
 | `MCP_URL_TEMPLATE` | `{base}/mcp/sse?scope={scope}` | A different but still templated shape |
 | `MCP_TRANSPORT` | `sse` | Your server speaks `streamable_http` |
 | `MCP_USER_HEADER` | `x-mcp-user-email` | Your server reads identity from another header |
+| `MCP_SERVICE_KEY` | blank (= not sent) | Your server wants the agent to authenticate itself (JobPoints does) |
+| `MCP_SERVICE_KEY_HEADER` | `x-mcp-service-key` | Your server reads that key from another header |
 | `MCP_ALLOWED_TOOLS` | blank (= all) | Pin it once you know the names |
 | `MCP_USER_EMAIL` | — | Who the server should scope to — your address |
 

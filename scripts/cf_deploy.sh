@@ -9,7 +9,8 @@
 #   1. src/gateway/cards.py reads A2A_GATEWAY_BASE_URL at import time. Set it
 #      afterwards and the Agent Card advertises localhost to Joule until the
 #      next restage.
-#   2. The AICORE_* credentials are secrets, so they are not in manifest.yml.
+#   2. The AICORE_* credentials and MCP_SERVICE_KEY are secrets, so they are
+#      not in manifest.yml.
 #
 # So: push --no-start, set the environment, then start.
 
@@ -28,7 +29,8 @@ if [[ -z "$ROUTE" ]]; then
   exit 1
 fi
 
-# Values that come from .env. AICORE_* are the secrets; the rest are per-tenant
+# Values that come from .env. AICORE_* and MCP_SERVICE_KEY are the secrets
+# (printed as a length only); the rest are per-tenant
 # settings that would be noise in a committed manifest. Anything not listed here
 # is either in manifest.yml or belongs only to the local two-process setup
 # (LANGGRAPH_API_URL, DATABASE_URI, REDIS_URI).
@@ -57,6 +59,8 @@ ENV_KEYS=(
   MCP_URL_TEMPLATE
   MCP_TRANSPORT
   MCP_USER_HEADER
+  MCP_SERVICE_KEY
+  MCP_SERVICE_KEY_HEADER
   DEV_FALLBACK_USER_EMAIL
   AGENT_MODEL
   UI_SYNTH_MODEL
@@ -105,7 +109,7 @@ if [[ -f .env ]]; then
     for wanted in "${ENV_KEYS[@]}"; do
       if [[ "$key" == "$wanted" ]]; then
         cf set-env "$APP_NAME" "$key" "$val" >/dev/null
-        if [[ "$key" == *SECRET* ]]; then
+        if [[ "$key" == *SECRET* || "$key" == "MCP_SERVICE_KEY" ]]; then
           echo "    $key = (${#val} chars)"
         else
           echo "    $key = $val"

@@ -6,12 +6,19 @@ enforces that a user only ever sees their own data. (The DuckDB mart in
 ``src/warehouse`` is a per-session snapshot of these same reports, loaded when
 the conversation starts; it is not a second path into the system of record.)
 
-Two things make that boundary real rather than decorative:
+Three things make that boundary real rather than decorative:
 
 * **Identity travels with the request.** The user's email is sent as a header
   (``MCP_USER_HEADER``, by default ``x-mcp-user-email``), and the server scopes
   every query to that person. The agent cannot ask for someone else's data
-  because it never writes the query.
+  because it never writes the query. There is no anonymous connection: with no
+  email to send, loading the tools raises instead of connecting as nobody.
+* **The agent proves it is allowed to send that header.** A server that trusts
+  the identity header only from a known caller checks a service key first.
+  JobPoints reads it from ``x-mcp-service-key`` (``MCP_SERVICE_KEY``), not from
+  ``Authorization: Bearer``, which it takes for a user session token and
+  answers with 401. A wrong or missing key gives 401; an email the server does
+  not know gives 403. Blank key means the header is not sent.
 * **The agent can be given a subset of the scope.** ``MCP_ALLOWED_TOOLS``
   narrows what the agent may call. Reach it doesn't need is surface it can get
   wrong.
@@ -25,6 +32,8 @@ own MCP server is configuration rather than a code change:
     MCP_URL_TEMPLATE    default "{base}/mcp/sse?scope={scope}"
     MCP_TRANSPORT       "sse" (default) or "streamable_http"
     MCP_USER_HEADER     identity header name
+    MCP_SERVICE_KEY     the agent's own key; blank sends no key header
+    MCP_SERVICE_KEY_HEADER  header the key goes in, default "x-mcp-service-key"
     MCP_ALLOWED_TOOLS   comma-separated; blank means "every tool in the scope"
 
 Run ``python scripts/probe_mcp.py`` to list what a scope really exposes.
@@ -50,6 +59,10 @@ MCP_URL: str = os.getenv("MCP_URL", "")
 MCP_URL_TEMPLATE: str = os.getenv("MCP_URL_TEMPLATE") or "{base}/mcp/sse?scope={scope}"
 MCP_TRANSPORT: str = os.getenv("MCP_TRANSPORT") or "sse"
 MCP_USER_HEADER: str = os.getenv("MCP_USER_HEADER") or "x-mcp-user-email"
+# The agent's credential, which lets it act as the MCP_USER_HEADER user. A
+# secret: it is never logged, and never sent anywhere but scope_url().
+MCP_SERVICE_KEY: str = os.getenv("MCP_SERVICE_KEY", "")
+MCP_SERVICE_KEY_HEADER: str = os.getenv("MCP_SERVICE_KEY_HEADER") or "x-mcp-service-key"
 
 
 def _parse_allowed(raw: str) -> frozenset:
@@ -87,6 +100,29 @@ def scope_url(base_url: str | None = None, scope: str | None = None) -> str:
     )
 
 
+def connection_headers(email: str) -> Dict[str, str]:
+    """The headers every request to the MCP server carries.
+
+    Who the user is (``MCP_USER_HEADER``) and, when ``MCP_SERVICE_KEY`` is set,
+    who the agent is (``MCP_SERVICE_KEY_HEADER``). The probe builds its
+    connection from this too, so the two cannot drift apart.
+
+    Raises:
+        ValueError: if *email* is empty. A connection with no user would run
+            the tools as nobody, or as whoever the server defaults to, so the
+            turn fails before anything connects.
+    """
+    if not email:
+        raise ValueError(
+            f"No user email to send in {MCP_USER_HEADER!r}, so the MCP tools have "
+            f"no one to act as. Set MCP_USER_EMAIL in .env."
+        )
+    headers = {MCP_USER_HEADER: email}
+    if MCP_SERVICE_KEY:
+        headers[MCP_SERVICE_KEY_HEADER] = MCP_SERVICE_KEY
+    return headers
+
+
 def table_name_for_tool(name: str) -> str:
     """A DuckDB table name for the rows a tool returns.
 
@@ -111,13 +147,17 @@ def table_name_for_tool(name: str) -> str:
 async def load_mcp_tools(email: str = "") -> List[BaseTool]:
     """Connect to the MCP server as *email* and return the tools it may call.
 
+    *email* falls back to ``MCP_USER_EMAIL``, the configured workshop user.
+
     Raises:
+        ValueError: if there is no email at all, before anything connects.
         RuntimeError: if the scope exposes no tools at all, or if
             :data:`ALLOWED_TOOLS` names one the server does not have. Failing
             here is deliberate: an agent quietly missing its data tool is worse
             than one that will not start.
     """
     effective_email = email or MCP_USER_EMAIL
+    headers = connection_headers(effective_email)
     url = scope_url()
     key = (effective_email, url)
 
@@ -129,7 +169,7 @@ async def load_mcp_tools(email: str = "") -> List[BaseTool]:
             MCP_SCOPE: {
                 "url": url,
                 "transport": MCP_TRANSPORT,
-                "headers": {MCP_USER_HEADER: effective_email} if effective_email else {},
+                "headers": headers,
             }
         }
     )

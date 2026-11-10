@@ -9,7 +9,8 @@ scope that probes clean is one the agent can reach.
     python scripts/probe_mcp.py --schemas          # include input schemas
 
 Reads MCP_BASE_URL, MCP_SCOPE, MCP_URL, MCP_URL_TEMPLATE, MCP_TRANSPORT,
-MCP_USER_HEADER and MCP_USER_EMAIL from the environment (or .env).
+MCP_USER_HEADER, MCP_USER_EMAIL, MCP_SERVICE_KEY and MCP_SERVICE_KEY_HEADER from
+the environment (or .env). The service key is never printed.
 """
 
 import argparse
@@ -28,8 +29,10 @@ load_dotenv(interpolate=False)
 # connects differently from the agent can report success the agent cannot repeat.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.mcp_client import (  # noqa: E402
+    MCP_SERVICE_KEY_HEADER,
     MCP_TRANSPORT,
     MCP_USER_HEADER,
+    connection_headers,
     scope_url,
     table_name_for_tool,
 )
@@ -40,24 +43,33 @@ DEFAULT_EMAIL = os.getenv("MCP_USER_EMAIL", "")
 
 
 async def probe(base_url: str, scope: str, email: str, show_schemas: bool) -> int:
+    try:
+        headers = connection_headers(email)
+    except ValueError as exc:
+        print(exc)
+        return 1
+
     url = scope_url(base_url, scope)
     print(f"Connecting to {url}")
     print(f"  transport: {MCP_TRANSPORT}")
-    print(f"  {MCP_USER_HEADER}: {email or '(none)'}\n")
+    print(f"  {MCP_USER_HEADER}: {email}")
+    # Reported from the headers actually sent, and never the value itself.
+    key_sent = MCP_SERVICE_KEY_HEADER in headers
+    print(f"  {MCP_SERVICE_KEY_HEADER}: {'(set)' if key_sent else '(not sent)'}\n")
 
     client = MultiServerMCPClient(
         {
             scope: {
                 "url": url,
                 "transport": MCP_TRANSPORT,
-                "headers": {MCP_USER_HEADER: email} if email else {},
+                "headers": headers,
             }
         }
     )
     tools = await client.get_tools()
 
     if not tools:
-        print("No tools returned. Check the scope name and the user email.")
+        print("No tools returned. Check the scope name, the user email and the service key.")
         return 1
 
     print(f"{len(tools)} tool(s) in scope {scope!r}:\n")
