@@ -7,12 +7,16 @@ connection.
 
 from __future__ import annotations
 
+import json
 import re
 import threading
 from typing import Any, Mapping
 
 import duckdb
 from langchain_core.runnables import RunnableConfig
+
+# What the text-to-SQL step replies when the snapshot cannot answer at all.
+CANNOT_ANSWER = "CANNOT_ANSWER"
 
 _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _lock = threading.Lock()
@@ -111,6 +115,69 @@ def load_session(session_id: str, tables: Mapping[str, list[dict[str, Any]]]) ->
         previous.close()
 
 
+class UnrelatedJoinError(ValueError):
+    """The query pairs every row of one table with every row of another."""
+
+
+# Operators a single-row result passes through unchanged on its way up the plan.
+_ROW_PRESERVING_OPS = {"PROJECTION", "FILTER"}
+
+
+def _yields_one_row(node: Mapping[str, Any]) -> bool:
+    """True when *node* is an aggregate with no GROUP BY, under projections.
+
+    `x / (SELECT sum(x) FROM t)` and `CROSS JOIN (SELECT avg(x) ...)` are the
+    legitimate cross products: one side is a single row, so every row on the
+    other side is paired with that one total.
+    """
+    while node.get("name") in _ROW_PRESERVING_OPS and len(node.get("children") or []) == 1:
+        node = node["children"][0]
+    return node.get("name") == "UNGROUPED_AGGREGATE"
+
+
+def _scanned_tables(node: Mapping[str, Any]) -> list[str]:
+    found: list[str] = []
+    table = (node.get("extra_info") or {}).get("Table")
+    if isinstance(table, str):
+        found.append(table.rsplit(".", 1)[-1])
+    for child in node.get("children") or []:
+        found.extend(t for t in _scanned_tables(child) if t not in found)
+    return found
+
+
+def _unrelated_join(node: Mapping[str, Any]) -> list[str] | None:
+    """Tables of the first many-by-many CROSS_PRODUCT in the plan, if any."""
+    children = node.get("children") or []
+    if node.get("name") == "CROSS_PRODUCT" and not any(_yields_one_row(c) for c in children):
+        return _scanned_tables(node)
+    for child in children:
+        hit = _unrelated_join(child)
+        if hit is not None:
+            return hit
+    return None
+
+
+def _reject_unrelated_join(con: duckdb.DuckDBPyConnection, sql: str) -> None:
+    """Refuse a join whose condition does not relate the two sides.
+
+    `a JOIN b ON a.name IN ('x', 'y')` filters one side only. DuckDB plans it
+    as a cross product, and every row of *b* inherits the same numbers from *a*:
+    a result that looks like an answer and means nothing. This happened in
+    production with a team-level award_reasons table "joined" to people.
+    """
+    plan = json.loads(con.execute(f"EXPLAIN (FORMAT JSON) {sql}").fetchall()[0][1])
+    for root in plan:
+        tables = _unrelated_join(root)
+        if tables is not None:
+            named = " and ".join(tables) or "two inputs"
+            raise UnrelatedJoinError(
+                f"The query pairs every row of {named} with every row of the other: "
+                "the join condition does not relate the two tables, so the numbers "
+                "would be meaningless. Join only on a column both tables share. If "
+                "they share none, this snapshot cannot answer the question."
+            )
+
+
 def fetch_rows(sql: str, session_id: str) -> list[dict[str, Any]]:
     """Run *sql* against this session's catalog."""
     with _lock:
@@ -120,6 +187,7 @@ def fetch_rows(sql: str, session_id: str) -> list[dict[str, Any]]:
                 f"warehouse is not loaded for session {session_id!r}. "
                 "It is created once when the conversation starts."
             )
+        _reject_unrelated_join(con, sql)
         relation = con.sql(sql)
         columns = list(relation.columns)
         values = relation.fetchall()
@@ -133,6 +201,7 @@ def schema_text(session_id: str) -> str:
         if con is None:
             return "No tables are loaded for this session yet."
         tables = [row[0] for row in con.execute("SHOW TABLES").fetchall()]
+        columns: dict[str, set[str]] = {}
         parts = [
             "This conversation's DuckDB snapshot. It was loaded once when the "
             "session started, from the manager's MCP reports. Quote mixed-case "
@@ -141,12 +210,23 @@ def schema_text(session_id: str) -> str:
         ]
         for table in tables:
             cols = con.execute(f"DESCRIBE {table}").fetchall()
+            columns[table] = {col[0] for col in cols if col[0] != "_empty"}
             parts.append(f"  {table}")
             for col in cols:
                 if col[0] == "_empty":
                     parts.append("    (no rows in this session)")
                     continue
                 parts.append(f"    \"{col[0]}\"  {col[1]}")
+            parts.append("")
+        unrelated = [
+            f"  {a} and {b}"
+            for i, a in enumerate(tables)
+            for b in tables[i + 1 :]
+            if columns.get(a) and columns.get(b) and not columns[a] & columns[b]
+        ]
+        if unrelated:
+            parts.append("These pairs share no column and cannot be joined:")
+            parts.extend(unrelated)
             parts.append("")
         parts.append(
             "Rules\n"
@@ -155,7 +235,13 @@ def schema_text(session_id: str) -> str:
             "  - Ranking questions (top, most, least, best, worst, 'moved most')\n"
             "    return the ORDERED SET, not LIMIT 1. The caller needs the\n"
             "    runners-up to answer properly and to draw a chart.\n"
-            "  - Return names and measures, not internal ids."
+            "  - Return names and measures, not internal ids.\n"
+            "  - Join two tables only on a column they both hold. A condition\n"
+            "    that filters one side (ON a.name IN (...)) is not a join.\n"
+            "  - A table without a person column says nothing about one person.\n"
+            f"  - If no table holds what the question needs, reply with exactly\n"
+            f"    {CANNOT_ANSWER}: <one sentence on what is missing>\n"
+            "    instead of SQL. Never invent a relationship to produce rows."
         )
         return "\n".join(parts)
 

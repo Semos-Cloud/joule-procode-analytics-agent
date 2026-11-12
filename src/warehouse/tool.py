@@ -23,9 +23,13 @@ from src.warehouse.sql_guard import (
     looks_like_sql,
     strip_internal_ids,
 )
-from src.warehouse.store import fetch_rows, schema_text, session_id_from_config
+from src.warehouse.store import CANNOT_ANSWER, fetch_rows, schema_text, session_id_from_config
 
 logger = logging.getLogger(__name__)
+
+
+class SnapshotCannotAnswer(ValueError):
+    """The text-to-SQL step said no table holds what the question needs."""
 
 
 def _sql_system(session_id: str) -> str:
@@ -63,7 +67,16 @@ async def _generate_sql(question: str, session_id: str, *, prior_sql: str = "", 
     reply = await llm.ainvoke(
         [SystemMessage(content=_sql_system(session_id)), HumanMessage(content=human)]
     )
-    return extract_sql(_message_text(reply))
+    text = _message_text(reply).strip().strip("`").strip()
+    # Checked before extract_sql, which would otherwise cut the reason at its
+    # first "from" and hand DuckDB half a sentence.
+    if text.upper().startswith(CANNOT_ANSWER):
+        reason = text[len(CANNOT_ANSWER) :].lstrip(" :-").strip() or "the data is not loaded"
+        raise SnapshotCannotAnswer(
+            f"The session snapshot cannot answer this: {reason}. Use a live report "
+            "tool if one holds it, otherwise tell the user the data is not available."
+        )
+    return extract_sql(text)
 
 
 async def run_warehouse_question(question: str, session_id: str) -> dict[str, Any]:
@@ -104,6 +117,12 @@ async def query_local_warehouse(question: str, config: RunnableConfig) -> str:
     The snapshot is this manager's MCP reports, loaded once when the session
     started. Use it for SQL the two live tool calls would make you do by hand:
     windows, multi-column filters, ranking with several measures at once.
+
+    Each table is one report at its own grain. A team-wide report (totals per
+    award reason, say) has no person column and cannot say anything about one
+    person, and two tables can only be combined on a column they share. For a
+    person's own recognitions — messages, skills, who recognised them — use the
+    live per-person recognitions report instead.
 
     Pass the question in English. Do not write SQL — this tool compiles it.
     """

@@ -15,8 +15,15 @@ from src.warehouse.sql_guard import (
     looks_like_sql,
     strip_internal_ids,
 )
-from src.warehouse.store import drop_session, fetch_rows, load_session, reset, schema_text
-from src.warehouse.tool import run_warehouse_question
+from src.warehouse.store import (
+    UnrelatedJoinError,
+    drop_session,
+    fetch_rows,
+    load_session,
+    reset,
+    schema_text,
+)
+from src.warehouse.tool import SnapshotCannotAnswer, run_warehouse_question
 
 _PEOPLE = [
     {"person_id": "P01", "full_name": "Maya Chen", "job_title": "Engineering Manager"},
@@ -222,3 +229,96 @@ async def test_tool_sql_passthrough_hides_ids_and_returns_rows():
     assert "full_name" in result["rows"][0]
     assert "FROM people" in result["sql"]
     drop_session("s")
+
+
+_REACH = [
+    {"FullName": "Irene Zachary", "ReceivedRecognitions": 5},
+    {"FullName": "Dana Pearson", "ReceivedRecognitions": 3},
+    {"FullName": "Sam Ortiz", "ReceivedRecognitions": 1},
+]
+_REASONS = [
+    {"AwardReason": "Teamwork", "TotalAwards": 4},
+    {"AwardReason": "Innovation", "TotalAwards": 2},
+]
+
+
+class TestUnrelatedJoins:
+    """A join that does not relate its tables produces confident nonsense."""
+
+    @pytest.fixture(autouse=True)
+    def _load(self):
+        load_session("s", {"my_teams_reach": _REACH, "award_reasons": _REASONS})
+
+    def test_rejects_the_production_query(self):
+        # Generated in production for "compare Irene's skills with Dana's".
+        # award_reasons is team-wide, so every reason got the same per-person
+        # totals and the chart showed it as a skills breakdown.
+        sql = """
+            SELECT "AwardReason" AS Skill,
+              SUM(CASE WHEN "FullName" = 'Irene Zachary' THEN "ReceivedRecognitions" ELSE 0 END) AS irene
+            FROM my_teams_reach m
+            JOIN award_reasons a ON m."FullName" IN ('Irene Zachary', 'Dana Pearson')
+            GROUP BY "AwardReason"
+        """
+        with pytest.raises(UnrelatedJoinError, match="award_reasons|my_teams_reach"):
+            fetch_rows(sql, "s")
+
+    def test_rejects_comma_join(self):
+        with pytest.raises(UnrelatedJoinError):
+            fetch_rows("SELECT * FROM my_teams_reach, award_reasons", "s")
+
+    @pytest.mark.parametrize(
+        "sql",
+        [
+            # Share of total: a cross product against one aggregated row.
+            'SELECT "FullName", "ReceivedRecognitions" * 1.0 / '
+            '(SELECT sum("ReceivedRecognitions") FROM my_teams_reach) AS share FROM my_teams_reach',
+            'SELECT "FullName", "ReceivedRecognitions" / t.s AS share FROM my_teams_reach '
+            'CROSS JOIN (SELECT sum("ReceivedRecognitions") AS s FROM my_teams_reach) t',
+            'SELECT "FullName" FROM my_teams_reach WHERE "ReceivedRecognitions" > '
+            '(SELECT avg("ReceivedRecognitions") FROM my_teams_reach)',
+            # Inequality self-join for ranking.
+            'SELECT a."FullName", count(*) AS ahead FROM my_teams_reach a '
+            'JOIN my_teams_reach b ON b."ReceivedRecognitions" > a."ReceivedRecognitions" GROUP BY 1',
+            'SELECT "FullName", rank() OVER (ORDER BY "ReceivedRecognitions" DESC) FROM my_teams_reach',
+        ],
+    )
+    def test_allows_legitimate_queries(self, sql):
+        assert fetch_rows(sql, "s")
+
+    def test_key_join_still_works(self):
+        load_session("k", {"people": _PEOPLE, "recognitions": _RECOGNITIONS})
+        rows = fetch_rows(
+            "SELECT p.full_name FROM recognitions r JOIN people p ON p.person_id = r.receiver_id",
+            "k",
+        )
+        assert len(rows) == 3
+
+    def test_schema_text_names_tables_that_cannot_be_joined(self):
+        text = schema_text("s")
+        assert "share no column" in text
+        assert "award_reasons and my_teams_reach" in text
+        assert "CANNOT_ANSWER" in text
+
+    def test_schema_text_omits_the_hint_when_tables_share_a_key(self):
+        load_session("k", {"a": [{"FullName": "x", "n": 1}], "b": [{"FullName": "x", "m": 2}]})
+        assert "share no column" not in schema_text("k")
+
+
+@pytest.mark.asyncio
+async def test_cannot_answer_reply_becomes_an_error_not_sql(monkeypatch):
+    load_session("s", {"my_teams_reach": _REACH, "award_reasons": _REASONS})
+
+    class FakeLLM:
+        async def ainvoke(self, _messages):
+            class Reply:
+                content = "CANNOT_ANSWER: skills per person are not in any table, award reasons are team-wide"
+
+            return Reply()
+
+    async def fake_load(*_args, **_kwargs):
+        return FakeLLM()
+
+    monkeypatch.setattr("src.warehouse.tool.aload_chat_model", fake_load)
+    with pytest.raises(SnapshotCannotAnswer, match="skills per person"):
+        await run_warehouse_question("Compare Irene's skills with Dana's", "s")
